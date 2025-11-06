@@ -6,16 +6,16 @@ Mine Cardano Midnight NIGHT tokens with zero code required. One-click installati
 
 ---
 
-## ⚠️ IMPORTANT - BETA SOFTWARE & HOSTING REQUIREMENTS
+## IMPORTANT - BETA SOFTWARE & HOSTING REQUIREMENTS
 
 **This plugin is currently in BETA.** While functional and production-ready, it has specific hosting requirements that determine whether it will work in your environment.
 
-### ✅ Confirmed Working Environments:
+### Confirmed Working Environments:
 - **[Local by Flywheel](https://localwp.com/)** - 100% compatibility (RECOMMENDED for easiest setup)
 - **Dedicated Servers** - Full compatibility with proper PHP configuration
 - **VPS Hosting** - 99% compatibility (DigitalOcean, Linode, Vultr, AWS, etc.)
 
-### ❌ Shared Hosting - Will Likely NOT Work:
+### Shared Hosting - Will Likely NOT Work:
 Shared hosting providers typically **block or kill** long-running PHP processes to protect their infrastructure. Common issues:
 - Process execution disabled or severely limited
 - FFI extension disabled for security
@@ -25,7 +25,7 @@ Shared hosting providers typically **block or kill** long-running PHP processes 
 
 **Bottom line:** If you're on shared hosting (GoDaddy, Bluehost, HostGator, etc.), this plugin will probably not work.
 
-### 🚀 Easiest Way to Get Started:
+### Easiest Way to Get Started:
 
 **Don't have a suitable environment? No problem!**
 
@@ -68,30 +68,30 @@ This started as an experiment: "What can we build with old tech and lightweight 
 
 ## Features
 
-### ⚡ One-Click Mining
+### One-Click Mining
 No configuration. No command-line. Just click "START MINING" and watch it work.
 
-### 🔄 Auto-Submit Solutions
+### Auto-Submit Solutions
 Toggle auto-submission to automatically send found solutions to the Midnight Scavenger API. Or review and submit them manually - your choice.
 
-### 🎯 Smart Start/Stop Controls
+### Smart Start/Stop Controls
 Graceful process management with real-time status updates. Stop mining instantly with proper cleanup - no orphaned processes.
 
-### 📊 Live Terminal Output
+### Live Terminal Output
 Watch your miner work in real-time with a cyberpunk-styled terminal showing hash rates, progress, and solutions found.
 
-### 💾 Comprehensive Management
+### Comprehensive Management
 - **Solutions Tab** - View all mined solutions, submission status, and receipts
 - **Wallets Tab** - Track all generated Cardano wallets and their registration status
 - **Manual Submit** - Submit solutions individually with full control
 - **Create Table** - Initialize database tables with one click
 
-### 🚀 High Performance
+### High Performance
 - **PHP FFI** integration with compiled Rust `ashmaize_capi.dll` for near-native hashing performance
 - **~1000 hashes/second** on consumer hardware
 - **Efficient wallet generation** using native PHP crypto libraries
 
-### 🔐 Battle-Tested Cryptography
+### Battle-Tested Cryptography
 - Full Cardano HD wallet derivation (BIP39/BIP32)
 - CIP-8 message signing for address registration
 - Ed25519 signature verification
@@ -114,16 +114,16 @@ Watch your miner work in real-time with a cyberpunk-styled terminal showing hash
    - Place the `umbrella-mines` folder in your WordPress `wp-content/plugins/` directory
 
 2. **Activate the plugin**
-   - Go to WordPress Admin → Plugins
+   - Go to WordPress Admin > Plugins
    - Find "Umbrella Mines" and click "Activate"
 
 3. **Create database tables**
-   - Go to Umbrella Mines → Create Table
+   - Go to Umbrella Mines > Create Table
    - Click "Initialize Database Tables"
    - Tables will be created automatically
 
 4. **Start mining**
-   - Go to Umbrella Mines → Dashboard
+   - Go to Umbrella Mines > Dashboard
    - (Optional) Check "Auto-submit solutions" to automatically submit found solutions
    - Click "START MINING"
    - That's it. Seriously.
@@ -465,7 +465,7 @@ The plugin implements the complete T&C acceptance workflow as required by the AP
 7. **Mining** - Only registered wallets can fetch challenges and submit solutions
 
 **Code flow:**
-- `start()` → `register_wallet()` → `get_tandc()` → `CardanoCIP8Signer::sign()` → `POST /register`
+- `start()` > `register_wallet()` > `get_tandc()` > `CardanoCIP8Signer::sign()` > `POST /register`
 - Registration stored in `wp_umbrella_mining_wallets` table with `registered_at` timestamp
 - Re-registration not required if wallet already registered
 
@@ -558,7 +558,7 @@ It's the best of both worlds: **native performance where it matters, high-level 
 Because it's WordPress, this runs **anywhere**:
 
 - **Local development**
-  - Local by Flywheel ✅ (tested)
+  - Local by Flywheel (tested)
   - XAMPP, MAMP, WAMP
   - Docker WordPress images
 
