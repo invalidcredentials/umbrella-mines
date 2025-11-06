@@ -1,0 +1,45 @@
+# Log files
+*.log
+umbrella-mines-output.log
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+*.swp
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# WordPress uploads (generated content)
+uploads/umbrella-mines/wallet_backups/*.json
+uploads/umbrella-mines/solution_backups/*.json
+
+# Keep the directory structure but ignore JSON backups
+!uploads/umbrella-mines/.gitkeep
+!uploads/umbrella-mines/wallet_backups/.gitkeep
+!uploads/umbrella-mines/solution_backups/.gitkeep
+
+# Compiled DLL (keep in repo for Windows users)
+# Comment out if you want to exclude binaries
+# bin/*.dll
+
+# Development/test files
+create-processes-table.php
+run-activation.php
+test-*.php
+debug-*.php
