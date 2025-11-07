@@ -7,8 +7,8 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-# Use ce-ashmaize from git
-ashmaize = { git = "https://github.com/cardano-foundation/ce-ashmaize.git" }
+# Use ce-ashmaize from git (IOHK official repo)
+ashmaize = { git = "https://github.com/input-output-hk/ce-ashmaize.git" }
 hex = "0.4"
 cryptoxide = "~0.5.1"
 
