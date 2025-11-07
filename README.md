@@ -1,8 +1,12 @@
 # UMBRELLA MINES $NIGHT MINER
 
+![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
+![PHP](https://img.shields.io/badge/PHP-8.0%2B-777BB4.svg)
+
 **A plug-and-play NIGHT mining solution built entirely on WordPress.**
 
-Mine Cardano Midnight NIGHT tokens with zero code required. One-click installation, one-click mining. That's it.
+Mine Cardano Midnight NIGHT tokens with zero code required. One-click installation, one-click mining. Cross-platform support for Windows, Linux, and macOS. That's it.
 
 ---
 
