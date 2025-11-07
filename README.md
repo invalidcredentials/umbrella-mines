@@ -39,6 +39,9 @@ Shared hosting providers typically **block or kill** long-running PHP processes 
 **System Requirements:**
 - Windows (currently - Linux/Mac support planned)
 - PHP 8.0+ with FFI extension enabled
+- **IMPORTANT:** PHP version MUST match between PHP-CLI and php.ini configuration
+  - If using Local by Flywheel, ensure site's PHP version matches lightning-services PHP version
+  - Mismatched versions will cause "Error establishing a database connection"
 - 2GB+ available RAM
 - WP-CLI access (included with Local by Flywheel)
 
@@ -104,6 +107,9 @@ Watch your miner work in real-time with a cyberpunk-styled terminal showing hash
 ### Requirements
 - **WordPress** 5.0+
 - **PHP** 8.0+ with FFI extension enabled
+  - **CRITICAL:** PHP executable version and php.ini configuration MUST match exactly
+  - Common error: Using PHP 8.3.17 executable with PHP 8.2.27 ini file causes database connection failures
+  - Solution: Update site's PHP version in Local to match your lightning-services PHP version
 - **Windows** (currently - Linux/Mac support planned)
 - **Local by Flywheel** or similar WordPress local dev environment (for Windows)
 
@@ -707,6 +713,22 @@ A: Yes. MIT license. Use it however you want. No restrictions.
 
 **Q: Why is the stop flag file not working?**
 A: The miner checks for stop signals at three checkpoints (before wallet, before round, every 1000 nonces). It should stop within 1-2 seconds. If not, the mining process may have crashed or been killed by your host. Check `wp-content/umbrella-mines-output.log` for errors.
+
+**Q: I'm getting "Error establishing a database connection" when mining. What's wrong?**
+A: This is almost always a PHP version mismatch. The PHP executable and php.ini configuration must use the EXACT same version.
+
+**How to fix in Local by Flywheel:**
+1. Check your site's PHP version: Right-click site > Open site shell > `php --version`
+2. Note the lightning-services PHP version in use (e.g., PHP 8.3.17)
+3. In Local: Right-click site > Change PHP version > Select matching version (e.g., 8.3.17)
+4. Restart site
+5. Try mining again - should work immediately
+
+**Common scenario:**
+- Site was set to PHP 8.2.27 but Local installed new PHP 8.3.17 in lightning-services
+- WP-CLI command uses 8.3.17 executable but loads 8.2.27 php.ini
+- MySQL extension mismatch causes database connection failure
+- Fix: Update site to PHP 8.3.17 (takes 2 seconds in Local)
 
 **Q: Why is auto-submit not working?**
 A: Check:
