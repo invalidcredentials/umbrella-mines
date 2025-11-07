@@ -11,6 +11,18 @@ if (!defined('ABSPATH')) {
 
 global $wpdb;
 
+// Load system requirements checker - PASSIVE CHECKS ONLY (no shell exec)
+$system_checks = array();
+$all_requirements_met = true;
+try {
+    require_once(UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-system-requirements.php');
+    $system_checks = Umbrella_Mines_System_Requirements::check_all();
+    $all_requirements_met = Umbrella_Mines_System_Requirements::are_critical_requirements_met();
+} catch (Exception $e) {
+    // If system check fails, default to showing no errors
+    error_log('Umbrella Mines: System requirements check failed: ' . $e->getMessage());
+}
+
 // Handle Start/Stop actions
 if (isset($_POST['action']) && isset($_POST['umbrella_mining_nonce']) && wp_verify_nonce($_POST['umbrella_mining_nonce'], 'umbrella_mining')) {
     $action = sanitize_text_field($_POST['action']);
@@ -136,6 +148,63 @@ if (file_exists($log_file)) {
             <div class="stat-meta"><?php echo number_format($stats['total_receipts']); ?> receipts</div>
         </div>
     </div>
+
+    <!-- System Requirements Check -->
+    <?php if (!empty($system_checks) && !$all_requirements_met): ?>
+    <div class="system-requirements-alert">
+        <div class="alert-header">
+            <span class="alert-icon">⚠️</span>
+            <span class="alert-title">SYSTEM REQUIREMENTS CHECK FAILED</span>
+        </div>
+        <div class="alert-body">
+            <p>Some critical requirements are missing. Mining will not work until these are resolved:</p>
+            <ul class="requirements-list">
+                <?php foreach ($system_checks as $key => $check): ?>
+                    <?php if ($check['critical'] && !$check['passed']): ?>
+                        <li class="requirement-failed">
+                            <strong><?php echo esc_html($check['name']); ?>:</strong> <?php echo esc_html($check['message']); ?>
+                        </li>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- System Requirements Details -->
+    <?php if (!empty($system_checks)): ?>
+    <div class="system-requirements">
+        <div class="requirements-header" onclick="jQuery('#requirements-details').slideToggle(200); jQuery('.requirements-toggle').toggleClass('open');" style="cursor: pointer;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span class="requirements-toggle">▶</span>
+                <span class="requirements-title">SYSTEM REQUIREMENTS</span>
+            </div>
+            <span class="requirements-status <?php echo $all_requirements_met ? 'passed' : 'failed'; ?>">
+                <?php echo $all_requirements_met ? '✓ ALL PASSED' : '✗ SOME FAILED'; ?>
+            </span>
+        </div>
+        <div id="requirements-details" class="requirements-grid" style="display: none;">
+            <?php foreach ($system_checks as $key => $check): ?>
+                <div class="requirement-item <?php echo $check['passed'] ? 'passed' : 'failed'; ?>">
+                    <div class="requirement-icon"><?php echo $check['passed'] ? '✓' : '✗'; ?></div>
+                    <div class="requirement-content">
+                        <div class="requirement-name"><?php echo esc_html($check['name']); ?></div>
+                        <div class="requirement-status">
+                            <span class="requirement-label">Required:</span>
+                            <span class="requirement-value"><?php echo esc_html($check['required']); ?></span>
+                            <span class="requirement-separator">|</span>
+                            <span class="requirement-label">Current:</span>
+                            <span class="requirement-value"><?php echo esc_html($check['current']); ?></span>
+                        </div>
+                        <?php if (!$check['passed']): ?>
+                            <div class="requirement-help"><?php echo esc_html($check['message']); ?></div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <!-- Challenge Info -->
     <?php if ($current_challenge && $night_rates_cache): ?>
@@ -471,6 +540,229 @@ jQuery(document).ready(function($) {
         letter-spacing: 0.5px;
     }
 
+    /* System Requirements Alert */
+    .system-requirements-alert {
+        background: linear-gradient(145deg, #3a1a1f 0%, #291014 100%);
+        border: 2px solid #ff4444;
+        border-radius: 8px;
+        margin-bottom: 30px;
+        overflow: hidden;
+        box-shadow: 0 0 30px rgba(255, 68, 68, 0.3);
+    }
+
+    .alert-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 15px 25px;
+        background: rgba(255, 68, 68, 0.1);
+        border-bottom: 1px solid rgba(255, 68, 68, 0.3);
+    }
+
+    .alert-icon {
+        font-size: 24px;
+    }
+
+    .alert-title {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        color: #ff4444;
+    }
+
+    .alert-body {
+        padding: 20px 25px;
+    }
+
+    .alert-body p {
+        color: #e0e0e0;
+        margin: 0 0 15px 0;
+        font-size: 14px;
+    }
+
+    .requirements-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .requirement-failed {
+        background: rgba(255, 68, 68, 0.05);
+        border-left: 3px solid #ff4444;
+        padding: 12px 15px;
+        margin: 8px 0;
+        border-radius: 4px;
+        color: #e0e0e0;
+        font-size: 13px;
+        line-height: 1.6;
+    }
+
+    .requirement-failed strong {
+        color: #ff4444;
+    }
+
+    /* System Requirements */
+    .system-requirements {
+        background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
+        border: 1px solid #2a3f5f;
+        border-radius: 8px;
+        margin-bottom: 30px;
+        overflow: hidden;
+    }
+
+    .requirements-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px 25px;
+        background: rgba(0, 255, 65, 0.05);
+        border-bottom: 1px solid #2a3f5f;
+        transition: all 0.2s ease;
+    }
+
+    .requirements-header:hover {
+        background: rgba(0, 255, 65, 0.08);
+    }
+
+    .requirements-toggle {
+        font-size: 12px;
+        color: #00ff41;
+        transition: transform 0.2s ease;
+        display: inline-block;
+    }
+
+    .requirements-toggle.open {
+        transform: rotate(90deg);
+    }
+
+    .requirements-title {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 2px;
+        color: #00ff41;
+        user-select: none;
+    }
+
+    .requirements-status {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        padding: 6px 15px;
+        border-radius: 4px;
+    }
+
+    .requirements-status.passed {
+        background: rgba(0, 255, 65, 0.15);
+        color: #00ff41;
+        border: 1px solid #00ff41;
+    }
+
+    .requirements-status.failed {
+        background: rgba(255, 68, 68, 0.15);
+        color: #ff4444;
+        border: 1px solid #ff4444;
+    }
+
+    .requirements-grid {
+        padding: 20px 25px;
+        display: grid;
+        gap: 15px;
+    }
+
+    .requirement-item {
+        display: flex;
+        gap: 15px;
+        padding: 15px;
+        border-radius: 6px;
+        border: 1px solid #2a3f5f;
+        background: rgba(0, 0, 0, 0.2);
+        transition: all 0.3s ease;
+    }
+
+    .requirement-item:hover {
+        transform: translateX(3px);
+        border-color: #00ff41;
+    }
+
+    .requirement-item.failed {
+        border-color: rgba(255, 68, 68, 0.3);
+        background: rgba(255, 68, 68, 0.05);
+    }
+
+    .requirement-item.failed:hover {
+        border-color: #ff4444;
+    }
+
+    .requirement-icon {
+        font-size: 24px;
+        font-weight: 700;
+        line-height: 1;
+        flex-shrink: 0;
+    }
+
+    .requirement-item.passed .requirement-icon {
+        color: #00ff41;
+    }
+
+    .requirement-item.failed .requirement-icon {
+        color: #ff4444;
+    }
+
+    .requirement-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .requirement-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: #fff;
+        letter-spacing: 0.5px;
+    }
+
+    .requirement-status {
+        font-size: 12px;
+        color: #999;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .requirement-label {
+        color: #666;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 1px;
+    }
+
+    .requirement-value {
+        color: #00ff41;
+        font-weight: 600;
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+    }
+
+    .requirement-item.failed .requirement-value {
+        color: #ff4444;
+    }
+
+    .requirement-separator {
+        color: #666;
+    }
+
+    .requirement-help {
+        font-size: 12px;
+        color: #999;
+        background: rgba(255, 68, 68, 0.1);
+        padding: 10px 12px;
+        border-radius: 4px;
+        border-left: 2px solid #ff4444;
+        line-height: 1.5;
+    }
+
     /* Challenge Info */
     .challenge-info {
         background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
@@ -606,39 +898,64 @@ jQuery(document).ready(function($) {
     .button-group {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 15px;
+        gap: 20px;
+        margin-bottom: 5px;
     }
 
     .btn {
-        padding: 15px 30px;
-        border: none;
-        border-radius: 6px;
+        padding: 18px 35px;
+        border: 2px solid transparent;
+        border-radius: 8px;
         font-size: 14px;
         font-weight: 700;
         letter-spacing: 2px;
         text-transform: uppercase;
         cursor: pointer;
         transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none !important;
     }
 
     .btn-start {
         background: linear-gradient(135deg, #00ff41 0%, #00cc33 100%);
         color: #0a0e27;
+        border-color: #00ff41;
+        box-shadow: 0 4px 15px rgba(0, 255, 65, 0.2);
     }
 
-    .btn-start:hover {
-        box-shadow: 0 0 30px rgba(0, 255, 65, 0.5);
+    .btn-start:hover:not(:disabled) {
+        box-shadow: 0 0 40px rgba(0, 255, 65, 0.6), 0 4px 20px rgba(0, 255, 65, 0.3);
         transform: translateY(-2px);
+        border-color: #00ff41;
+    }
+
+    .btn-start:active:not(:disabled) {
+        transform: translateY(0px);
+        box-shadow: 0 0 20px rgba(0, 255, 65, 0.4);
     }
 
     .btn-stop {
         background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
         color: #fff;
+        border-color: #ff4444;
+        box-shadow: 0 4px 15px rgba(255, 68, 68, 0.2);
     }
 
-    .btn-stop:hover {
-        box-shadow: 0 0 30px rgba(255, 68, 68, 0.5);
+    .btn-stop:hover:not(:disabled) {
+        box-shadow: 0 0 40px rgba(255, 68, 68, 0.6), 0 4px 20px rgba(255, 68, 68, 0.3);
         transform: translateY(-2px);
+        border-color: #ff6666;
+    }
+
+    .btn-stop:active:not(:disabled) {
+        transform: translateY(0px);
+        box-shadow: 0 0 20px rgba(255, 68, 68, 0.4);
     }
 
     /* Auto-submit toggle */

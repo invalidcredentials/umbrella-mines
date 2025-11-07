@@ -47,6 +47,7 @@ class Umbrella_Mines {
         // Admin hooks
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
+        // add_action('admin_notices', array($this, 'show_system_requirements_notice')); // DISABLED
 
         // AJAX hooks
         add_action('wp_ajax_delete_solution', array($this, 'ajax_delete_solution'));
@@ -59,6 +60,8 @@ class Umbrella_Mines {
         add_action('wp_ajax_umbrella_start_mining_live', array($this, 'ajax_start_mining_live'));
         add_action('wp_ajax_umbrella_stop_mining_live', array($this, 'ajax_stop_mining_live'));
         add_action('wp_ajax_umbrella_get_mining_status_live', array($this, 'ajax_get_mining_status_live'));
+        add_action('wp_ajax_umbrella_check_export_allowed', array($this, 'ajax_check_export_allowed'));
+        add_action('wp_ajax_umbrella_export_all_data', array($this, 'ajax_export_all_data'));
 
         // WP-CLI commands
         if (defined('WP_CLI') && WP_CLI) {
@@ -1137,6 +1140,218 @@ class Umbrella_Mines {
             'message' => 'Mining stopped',
             'killed' => $result['killed']
         ));
+    }
+
+    /**
+     * AJAX: Check if export is allowed (check for pending solutions)
+     */
+    public function ajax_check_export_allowed() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        global $wpdb;
+
+        // Check for pending/non-submitted solutions
+        $pending_count = $wpdb->get_var("
+            SELECT COUNT(*)
+            FROM {$wpdb->prefix}umbrella_mining_solutions
+            WHERE submission_status NOT IN ('submitted', 'confirmed')
+        ");
+
+        if ($pending_count > 0) {
+            $pending_solutions = $wpdb->get_results("
+                SELECT s.id, s.challenge_id, s.nonce, s.submission_status, s.found_at, w.address
+                FROM {$wpdb->prefix}umbrella_mining_solutions s
+                JOIN {$wpdb->prefix}umbrella_mining_wallets w ON s.wallet_id = w.id
+                WHERE s.submission_status NOT IN ('submitted', 'confirmed')
+                ORDER BY s.found_at DESC
+                LIMIT 10
+            ", ARRAY_A);
+
+            wp_send_json_error(array(
+                'message' => 'Cannot export: You have ' . $pending_count . ' solution(s) that are not submitted yet!',
+                'warning' => 'Please submit all solutions before exporting.',
+                'pending_count' => (int)$pending_count,
+                'pending_solutions' => array_map(function($s) {
+                    return array(
+                        'solution_id' => (int)$s['id'],
+                        'challenge_id' => $s['challenge_id'],
+                        'nonce' => $s['nonce'],
+                        'status' => $s['submission_status'],
+                        'found_at' => $s['found_at']
+                    );
+                }, $pending_solutions)
+            ));
+        }
+
+        wp_send_json_success(array('allowed' => true));
+    }
+
+    /**
+     * AJAX: Export all mining data (wallet-centric structure)
+     */
+    public function ajax_export_all_data() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+
+        global $wpdb;
+
+        // Check for pending/non-submitted solutions
+        $pending_count = $wpdb->get_var("
+            SELECT COUNT(*)
+            FROM {$wpdb->prefix}umbrella_mining_solutions
+            WHERE submission_status NOT IN ('submitted', 'confirmed')
+        ");
+
+        // If there are pending solutions, return warning instead of exporting
+        if ($pending_count > 0) {
+            $pending_solutions = $wpdb->get_results("
+                SELECT s.id, s.challenge_id, s.nonce, s.submission_status, s.found_at, w.address
+                FROM {$wpdb->prefix}umbrella_mining_solutions s
+                JOIN {$wpdb->prefix}umbrella_mining_wallets w ON s.wallet_id = w.id
+                WHERE s.submission_status NOT IN ('submitted', 'confirmed')
+                ORDER BY s.found_at DESC
+            ", ARRAY_A);
+
+            wp_send_json_error(array(
+                'message' => 'Cannot export: You have ' . $pending_count . ' solution(s) that are not submitted yet!',
+                'warning' => 'Please submit all solutions before exporting. Only submitted/confirmed solutions can be exported.',
+                'pending_count' => (int)$pending_count,
+                'pending_solutions' => array_map(function($s) {
+                    return array(
+                        'solution_id' => (int)$s['id'],
+                        'challenge_id' => $s['challenge_id'],
+                        'nonce' => $s['nonce'],
+                        'status' => $s['submission_status'],
+                        'found_at' => $s['found_at'],
+                        'address' => substr($s['address'], 0, 20) . '...'
+                    );
+                }, $pending_solutions)
+            ));
+        }
+
+        // Build wallet-centric export structure (ONLY wallets with submitted/confirmed solutions)
+        $export_data = array(
+            'export_date' => current_time('mysql'),
+            'export_version' => '1.0',
+            'plugin_version' => UMBRELLA_MINES_VERSION,
+            'export_note' => 'This export only includes wallets with submitted or confirmed solutions',
+            'wallets' => array()
+        );
+
+        // Get ONLY wallets that have submitted/confirmed solutions
+        $wallets = $wpdb->get_results("
+            SELECT DISTINCT w.*
+            FROM {$wpdb->prefix}umbrella_mining_wallets w
+            INNER JOIN {$wpdb->prefix}umbrella_mining_solutions s ON w.id = s.wallet_id
+            WHERE s.submission_status IN ('submitted', 'confirmed')
+            ORDER BY w.id ASC
+        ", ARRAY_A);
+
+        $total_solutions = 0;
+        $total_receipts = 0;
+        $wallets_with_solutions = count($wallets);
+
+        foreach ($wallets as $wallet) {
+            $wallet_id = $wallet['id'];
+
+            // Get ONLY submitted/confirmed solutions for this wallet
+            $solutions = $wpdb->get_results($wpdb->prepare("
+                SELECT * FROM {$wpdb->prefix}umbrella_mining_solutions
+                WHERE wallet_id = %d
+                AND submission_status IN ('submitted', 'confirmed')
+                ORDER BY found_at ASC
+            ", $wallet_id), ARRAY_A);
+
+            $wallet_solutions = array();
+            $confirmed_count = 0;
+            $receipt_count = 0;
+
+            foreach ($solutions as $solution) {
+                $solution_id = $solution['id'];
+
+                // Get receipt for this solution (if exists)
+                $receipt = $wpdb->get_row($wpdb->prepare("
+                    SELECT * FROM {$wpdb->prefix}umbrella_mining_receipts
+                    WHERE solution_id = %d
+                    LIMIT 1
+                ", $solution_id), ARRAY_A);
+
+                // Add receipt to solution
+                $solution['receipt'] = $receipt;
+
+                if ($receipt) {
+                    $receipt_count++;
+                    $total_receipts++;
+                }
+
+                if ($solution['submission_status'] === 'confirmed') {
+                    $confirmed_count++;
+                }
+
+                $wallet_solutions[] = $solution;
+            }
+
+            $total_solutions += count($solutions);
+            if (count($solutions) > 0) {
+                $wallets_with_solutions++;
+            }
+
+            // Build wallet export object
+            $wallet_export = array(
+                'wallet_id' => (int)$wallet['id'],
+                'address' => $wallet['address'],
+                'derivation_path' => $wallet['derivation_path'],
+                'payment_skey_extended' => $wallet['payment_skey_extended'], // 🔐 CRITICAL
+                'payment_pkey' => $wallet['payment_pkey'],
+                'payment_keyhash' => $wallet['payment_keyhash'],
+                'network' => $wallet['network'],
+                'registration' => array(
+                    'signature' => $wallet['registration_signature'],
+                    'pubkey' => $wallet['registration_pubkey'],
+                    'registered_at' => $wallet['registered_at']
+                ),
+                'created_at' => $wallet['created_at'],
+                'solutions' => $wallet_solutions,
+                'stats' => array(
+                    'total_solutions' => count($solutions),
+                    'confirmed_solutions' => $confirmed_count,
+                    'pending_solutions' => count($solutions) - $confirmed_count,
+                    'total_receipts' => $receipt_count
+                )
+            );
+
+            $export_data['wallets'][] = $wallet_export;
+        }
+
+        // Add summary stats
+        $export_data['total_wallets'] = count($wallets);
+        $export_data['total_solutions'] = $total_solutions;
+        $export_data['total_receipts'] = $total_receipts;
+        $export_data['summary'] = array(
+            'wallets_with_solutions' => $wallets_with_solutions,
+            'wallets_without_solutions' => count($wallets) - $wallets_with_solutions,
+            'solutions_with_receipts' => $total_receipts,
+            'solutions_pending_receipt' => $total_solutions - $total_receipts
+        );
+
+        // Generate filename with timestamp
+        $filename = 'umbrella-mines-export-' . date('Y-m-d-His') . '.json';
+
+        // Send JSON file
+        header('Content-Type: application/json');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: no-cache, must-revalidate');
+        header('Expires: 0');
+
+        echo json_encode($export_data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        exit;
     }
 
     /**

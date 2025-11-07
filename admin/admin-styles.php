@@ -37,6 +37,29 @@
         letter-spacing: 2px;
         color: #00ff41;
         text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .umbrella-icon {
+        font-size: 32px;
+        color: #00ff41;
+        text-shadow: 0 0 15px rgba(0, 255, 65, 0.7);
+        display: inline-block;
+        animation: float 3s ease-in-out infinite;
+    }
+
+    @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-5px); }
+    }
+
+    .page-subtitle {
+        color: #00d4ff;
+        text-shadow: 0 0 12px rgba(0, 212, 255, 0.6);
+        font-weight: 800;
     }
 
     .page-actions {

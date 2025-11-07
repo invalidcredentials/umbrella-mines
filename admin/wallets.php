@@ -37,9 +37,12 @@ $registered_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}umbrella
 
 <div class="wrap umbrella-mines-page">
     <div class="page-header">
-        <h1>MINING WALLETS</h1>
-        <div class="page-actions">
+        <h1><span class="umbrella-icon">☂</span> UMBRELLA MINES <span class="page-subtitle">MINING WALLETS</span></h1>
+        <div class="page-actions" style="display: flex; align-items: center; gap: 15px;">
             <span style="color: #666; font-size: 13px; letter-spacing: 1px;">Total: <?php echo number_format($total); ?> | Registered: <?php echo number_format($registered_count); ?></span>
+            <button type="button" id="export-all-data" class="button button-primary">
+                <span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Export All Data
+            </button>
         </div>
     </div>
 
@@ -110,11 +113,20 @@ $registered_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}umbrella
 </div>
 
 <!-- Wallet Details Modal -->
-<div id="wallet-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 100000;">
-    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; max-width: 800px; max-height: 80vh; overflow-y: auto; border-radius: 4px;">
+<div id="wallet-modal" class="umbrella-modal-overlay">
+    <div class="umbrella-modal">
         <h2>Wallet Details</h2>
         <div id="wallet-details"></div>
         <button class="button" onclick="jQuery('#wallet-modal').hide();">Close</button>
+    </div>
+</div>
+
+<!-- Export Warning Modal -->
+<div id="export-warning-modal" class="umbrella-modal-overlay">
+    <div class="umbrella-modal" style="max-width: 600px;">
+        <h2>⚠️ Cannot Export Yet</h2>
+        <div id="export-warning-content"></div>
+        <button class="button button-primary" onclick="jQuery('#export-warning-modal').hide();">Got it!</button>
     </div>
 </div>
 
@@ -128,5 +140,91 @@ jQuery(document).ready(function($) {
         // TODO: Add AJAX handler to load full wallet details
         alert('Wallet details view coming soon! Wallet ID: ' + walletId);
     });
+
+    // Export all data button
+    jQuery('#export-all-data').on('click', function(e) {
+        e.preventDefault();
+
+        const button = jQuery(this);
+        const originalText = button.html();
+
+        // Show loading state
+        button.prop('disabled', true);
+        button.html('<span class="dashicons dashicons-update-alt" style="margin-top: 3px; animation: rotation 1s infinite linear;"></span> Checking...');
+
+        // First check if export is allowed
+        jQuery.post(ajaxurl, {
+            action: 'umbrella_check_export_allowed',
+            nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+        }, function(response) {
+            if (response.success) {
+                // Export allowed - trigger download
+                button.html('<span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Downloading...');
+
+                const form = jQuery('<form>', {
+                    'method': 'POST',
+                    'action': ajaxurl
+                });
+                form.append(jQuery('<input>', {'type': 'hidden', 'name': 'action', 'value': 'umbrella_export_all_data'}));
+                form.append(jQuery('<input>', {'type': 'hidden', 'name': 'nonce', 'value': '<?php echo wp_create_nonce('umbrella_mining'); ?>'}));
+                jQuery('body').append(form);
+                form.submit();
+                form.remove();
+
+                // Show success and reset
+                setTimeout(function() {
+                    button.prop('disabled', false);
+                    button.html('<span class="dashicons dashicons-yes" style="margin-top: 3px;"></span> Exported!');
+                    setTimeout(function() {
+                        button.html(originalText);
+                    }, 2000);
+                }, 500);
+            } else {
+                // Export blocked - show warning in styled modal
+                button.prop('disabled', false);
+                button.html(originalText);
+
+                let content = '<p style="color: #e0e0e0; font-size: 14px; line-height: 1.6; margin-bottom: 20px;">';
+                content += '<strong style="color: #00ff41;">You have ' + response.data.pending_count + ' solution(s) that need to be submitted first!</strong><br><br>';
+                content += 'Only submitted or confirmed solutions can be exported. Please go to the Solutions page and submit all pending solutions.';
+                content += '</p>';
+
+                if (response.data.pending_solutions && response.data.pending_solutions.length > 0) {
+                    content += '<div style="background: rgba(0, 255, 65, 0.05); border: 1px solid #2a3f5f; border-radius: 8px; padding: 15px; max-height: 300px; overflow-y: auto;">';
+                    content += '<strong style="color: #00ff41; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;">Pending Solutions (showing up to 10):</strong>';
+                    content += '<ul style="list-style: none; margin: 10px 0 0 0; padding: 0;">';
+                    response.data.pending_solutions.forEach(function(sol) {
+                        content += '<li style="color: #999; padding: 8px 0; border-bottom: 1px solid #2a3f5f; font-size: 13px;">';
+                        content += '<code style="background: rgba(0,255,65,0.1); color: #00ff41; padding: 2px 6px; border-radius: 3px; font-size: 11px;">#' + sol.solution_id + '</code> ';
+                        content += '<span style="color: #666;">Challenge:</span> <code style="background: rgba(0,255,65,0.1); color: #00ff41; padding: 2px 6px; border-radius: 3px; font-size: 10px;">' + sol.challenge_id + '</code> ';
+                        content += '<span style="color: #dc3232; font-weight: 600; text-transform: uppercase; font-size: 11px;">(' + sol.status + ')</span>';
+                        content += '</li>';
+                    });
+                    content += '</ul>';
+                    content += '</div>';
+                }
+
+                content += '<p style="color: #666; font-size: 12px; margin-top: 15px; text-align: center;">💡 Tip: Go to <a href="?page=umbrella-mines-solutions" style="color: #00ff41; text-decoration: none;">Solutions page</a> to submit pending solutions</p>';
+
+                jQuery('#export-warning-content').html(content);
+                jQuery('#export-warning-modal').show();
+            }
+        }).fail(function() {
+            button.prop('disabled', false);
+            button.html(originalText);
+            alert('Failed to check export status. Please try again.');
+        });
+    });
 });
+
+// Add rotation animation for loading spinner
+jQuery('<style>')
+    .prop('type', 'text/css')
+    .html(`
+        @keyframes rotation {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(359deg); }
+        }
+    `)
+    .appendTo('head');
 </script>
