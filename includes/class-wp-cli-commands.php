@@ -482,7 +482,22 @@ class Umbrella_Mines_CLI_Commands {
     private function mine_solution($wallet, $challenge, $max_attempts) {
         // Initialize AshMaize FFI with ROM
         $start_time = microtime(true);
-        $dll_path = UMBRELLA_MINES_PLUGIN_DIR . 'bin/ashmaize_capi.dll';
+
+        // Detect OS and load correct library
+        $lib_ext = 'dll'; // Default Windows
+        if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
+            $lib_ext = (PHP_OS === 'Darwin') ? 'dylib' : 'so';
+        }
+        $dll_path = UMBRELLA_MINES_PLUGIN_DIR . 'bin/ashmaize_capi.' . $lib_ext;
+
+        // Verify library exists
+        if (!file_exists($dll_path)) {
+            WP_CLI::error("AshMaize library not found for your OS: {$dll_path}");
+            WP_CLI::line("Expected file: ashmaize_capi.{$lib_ext}");
+            WP_CLI::line("Please compile the library for your platform.");
+            return null;
+        }
+
         $ashmaize = new AshMaizeFFI($dll_path, $challenge['no_pre_mine']);
         $init_time = microtime(true) - $start_time;
 

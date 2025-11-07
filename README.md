@@ -110,8 +110,8 @@ Watch your miner work in real-time with a cyberpunk-styled terminal showing hash
   - **CRITICAL:** PHP executable version and php.ini configuration MUST match exactly
   - Common error: Using PHP 8.3.17 executable with PHP 8.2.27 ini file causes database connection failures
   - Solution: Update site's PHP version in Local to match your lightning-services PHP version
-- **Windows** (currently - Linux/Mac support planned)
-- **Local by Flywheel** or similar WordPress local dev environment (for Windows)
+- **Platform Support:** Windows, Linux, macOS
+- **Pre-compiled Libraries:** Included for Windows (.dll), Linux (.so), macOS (.dylib)
 
 ### Steps
 
@@ -133,6 +133,44 @@ Watch your miner work in real-time with a cyberpunk-styled terminal showing hash
    - (Optional) Check "Auto-submit solutions" to automatically submit found solutions
    - Click "START MINING"
    - That's it. Seriously.
+
+---
+
+## Compiling Libraries (Optional)
+
+Pre-compiled libraries for Windows, Linux, and macOS are included in the `bin/` directory. However, if you need to compile them yourself:
+
+### Automatic Compilation (GitHub Actions)
+
+Every push to the repository automatically compiles libraries for all platforms via GitHub Actions:
+
+1. Libraries are built for Windows (.dll), Linux (.so), and macOS (.dylib)
+2. Download from the latest GitHub Actions run artifacts
+3. SHA256 hashes are generated for verification
+4. Or grab from the latest GitHub Release
+
+### Manual Compilation
+
+**Requirements:**
+- Rust toolchain installed (`rustup` from https://rustup.rs)
+
+**Steps:**
+```bash
+cd rust-wrapper
+cargo build --release
+
+# The compiled library will be at:
+# Windows: target/release/ashmaize_capi.dll
+# Linux:   target/release/libashmaize_capi.so
+# macOS:   target/release/libashmaize_capi.dylib
+
+# Copy to bin/ directory:
+cp target/release/libashmaize_capi.{so,dylib,dll} ../bin/ashmaize_capi.{so,dylib,dll}
+```
+
+**Cross-Platform Compilation:**
+
+Linux and macOS libraries can be cross-compiled from Windows using WSL or Docker, but the easiest method is to use GitHub Actions (automatic) or compile natively on each platform.
 
 ---
 

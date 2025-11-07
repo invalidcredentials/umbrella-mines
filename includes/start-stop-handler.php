@@ -40,47 +40,62 @@ function umbrella_mines_handle_action($action, $log_file) {
             }
         }
 
-        // Find the site's php.ini by matching the site path
+        // Find php.ini (OS-specific)
         $php_ini = '';
-        $site_id_dirs = glob('C:/Users/' . $username . '/AppData/Roaming/Local/run/*', GLOB_ONLYDIR);
+        $is_windows = (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN');
 
-        // Try to match based on the site's actual path
-        // ABSPATH looks like: C:\Users\pb\Local Sites\umbrella-mine\app\public/
-        // nginx conf has: C:/Users/pb/Local Sites/umbrella-mine/app/public
-        $current_site_path = rtrim(str_replace('\\', '/', ABSPATH), '/');
+        if ($is_windows) {
+            // Windows: Look for Local by Flywheel configuration
+            $site_id_dirs = glob('C:/Users/' . $username . '/AppData/Roaming/Local/run/*', GLOB_ONLYDIR);
 
-        file_put_contents($log_file, "Looking for site with path: $current_site_path\n", FILE_APPEND);
+            // Try to match based on the site's actual path
+            // ABSPATH looks like: C:\Users\pb\Local Sites\umbrella-mine\app\public/
+            // nginx conf has: C:/Users/pb/Local Sites/umbrella-mine/app/public
+            $current_site_path = rtrim(str_replace('\\', '/', ABSPATH), '/');
 
-        foreach ($site_id_dirs as $dir) {
-            $site_conf = $dir . '/conf/nginx/site.conf';
-            if (file_exists($site_conf)) {
-                $conf_content = file_get_contents($site_conf);
-                file_put_contents($log_file, "Checking $dir\n", FILE_APPEND);
+            file_put_contents($log_file, "Looking for site with path: $current_site_path\n", FILE_APPEND);
 
-                // Extract the root path from nginx config
-                if (preg_match('/root\s+"([^"]+)";/', $conf_content, $matches)) {
-                    $nginx_root = rtrim($matches[1], '/');
-                    file_put_contents($log_file, "  Found root: $nginx_root\n", FILE_APPEND);
+            foreach ($site_id_dirs as $dir) {
+                $site_conf = $dir . '/conf/nginx/site.conf';
+                if (file_exists($site_conf)) {
+                    $conf_content = file_get_contents($site_conf);
+                    file_put_contents($log_file, "Checking $dir\n", FILE_APPEND);
 
-                    if ($nginx_root === $current_site_path) {
-                        $php_ini = $dir . '/conf/php/php.ini';
-                        file_put_contents($log_file, "  MATCH! Using: $php_ini\n", FILE_APPEND);
-                        if (file_exists($php_ini)) {
-                            break;
+                    // Extract the root path from nginx config
+                    if (preg_match('/root\s+"([^"]+)";/', $conf_content, $matches)) {
+                        $nginx_root = rtrim($matches[1], '/');
+                        file_put_contents($log_file, "  Found root: $nginx_root\n", FILE_APPEND);
+
+                        if ($nginx_root === $current_site_path) {
+                            $php_ini = $dir . '/conf/php/php.ini';
+                            file_put_contents($log_file, "  MATCH! Using: $php_ini\n", FILE_APPEND);
+                            if (file_exists($php_ini)) {
+                                break;
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Fallback: just find ANY php.ini if we couldn't match
-        if (!$php_ini) {
-            file_put_contents($log_file, "WARNING: Could not match site, using first php.ini found\n", FILE_APPEND);
-            foreach ($site_id_dirs as $dir) {
-                if (file_exists($dir . '/conf/php/php.ini')) {
-                    $php_ini = $dir . '/conf/php/php.ini';
-                    break;
+            // Fallback: just find ANY php.ini if we couldn't match
+            if (!$php_ini) {
+                file_put_contents($log_file, "WARNING: Could not match site, using first php.ini found\n", FILE_APPEND);
+                foreach ($site_id_dirs as $dir) {
+                    if (file_exists($dir . '/conf/php/php.ini')) {
+                        $php_ini = $dir . '/conf/php/php.ini';
+                        break;
+                    }
                 }
+            }
+        } else {
+            // Linux/Mac: Use system's default php.ini or auto-detect
+            $detected = php_ini_loaded_file();
+            if ($detected && file_exists($detected)) {
+                $php_ini = $detected;
+                file_put_contents($log_file, "Using detected php.ini: $php_ini\n", FILE_APPEND);
+            } else {
+                // Don't set php.ini, let PHP use default
+                file_put_contents($log_file, "Using system default php.ini (auto-detected)\n", FILE_APPEND);
             }
         }
 
@@ -96,15 +111,34 @@ function umbrella_mines_handle_action($action, $log_file) {
             exit;
         }
 
-        // Direct command that works when I run it manually
-        $cmd = '"' . $php_cli . '" -c "' . $php_ini . '" "' . $wp_cli . '" umbrella-mines start --max-attempts=' . $max_attempts . ' --derive=' . $derivation_path . ' --path="' . ABSPATH . '" >> "' . $log_file . '" 2>&1';
+        // Build command
+        $cmd_parts = array('"' . $php_cli . '"');
+        if ($php_ini) {
+            $cmd_parts[] = '-c "' . $php_ini . '"';
+        }
+        $cmd_parts[] = '"' . $wp_cli . '" umbrella-mines start';
+        $cmd_parts[] = '--max-attempts=' . $max_attempts;
+        $cmd_parts[] = '--derive=' . $derivation_path;
+        $cmd_parts[] = '--path="' . ABSPATH . '"';
+        $cmd_parts[] = '>>' . '"' . $log_file . '" 2>&1';
 
-        // Write to a batch file
-        $bat = WP_CONTENT_DIR . '/start.bat';
-        file_put_contents($bat, $cmd);
+        $cmd = implode(' ', $cmd_parts);
 
-        // Execute it in background with pclose/popen to not hang
-        pclose(popen('start /B cmd /c "' . $bat . '"', 'r'));
+        // Detect OS and create appropriate script
+        $is_windows = (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN');
+
+        if ($is_windows) {
+            // Windows: batch file
+            $script = WP_CONTENT_DIR . '/start.bat';
+            file_put_contents($script, $cmd);
+            pclose(popen('start /B cmd /c "' . $script . '"', 'r'));
+        } else {
+            // Linux/Mac: shell script
+            $script = WP_CONTENT_DIR . '/start.sh';
+            file_put_contents($script, "#!/bin/bash\n" . $cmd);
+            chmod($script, 0755);
+            exec($script . ' > /dev/null 2>&1 &');
+        }
 
         $exec_log = "Mining started\n";
 

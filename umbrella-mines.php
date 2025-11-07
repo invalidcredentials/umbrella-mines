@@ -775,6 +775,26 @@ class Umbrella_Mines {
     }
 
     /**
+     * Get OS type (windows or unix)
+     */
+    private function get_os_type() {
+        return strtoupper(substr(PHP_OS, 0, 3)) === 'WIN' ? 'windows' : 'unix';
+    }
+
+    /**
+     * Get dynamic library extension for current OS
+     */
+    private function get_lib_extension() {
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            return 'dll';
+        }
+        if (PHP_OS === 'Darwin') {
+            return 'dylib';
+        }
+        return 'so';
+    }
+
+    /**
      * AJAX: Stop all mining jobs
      */
     public function ajax_stop_mining() {
@@ -1012,31 +1032,46 @@ class Umbrella_Mines {
             return array('success' => true, 'killed' => 0);
         }
 
+        $is_windows = (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN');
         $killed = 0;
+
         foreach ($processes as $process) {
             $pid = $process['pid'];
 
             if ($pid > 0) {
-                // Kill process tree using taskkill /T
+                // Kill process with OS-appropriate command
                 $kill_output = array();
-                exec("taskkill /F /PID {$pid} /T 2>&1", $kill_output, $kill_return);
+                if ($is_windows) {
+                    exec("taskkill /F /PID {$pid} /T 2>&1", $kill_output, $kill_return);
+                } else {
+                    exec("kill -9 {$pid} 2>&1", $kill_output, $kill_return);
+                }
 
                 $stop_log .= "Killed PID {$pid}: " . implode(' ', $kill_output) . "\n";
                 $killed++;
             } else {
-                // Fallback: PID was not captured, use wmic to find umbrella-mines processes
+                // Fallback: PID not tracked, search for processes
                 $stop_log .= "PID not tracked, searching for umbrella-mines processes...\n";
 
-                $cmd = 'wmic process where "commandline like \'%umbrella-mines%\'" get processid 2>nul';
+                if ($is_windows) {
+                    $cmd = 'wmic process where "commandline like \'%umbrella-mines%\'" get processid 2>nul';
+                } else {
+                    $cmd = "ps aux | grep '[u]mbrella-mines' | awk '{print \$2}'";
+                }
+
                 exec($cmd, $pids, $return_code);
 
                 foreach ($pids as $line) {
                     $found_pid = trim($line);
                     if (is_numeric($found_pid) && $found_pid > 0) {
-                        $kill_cmd = "taskkill /F /PID {$found_pid} /T 2>&1";
+                        $output = array();
+                        if ($is_windows) {
+                            $kill_cmd = "taskkill /F /PID {$found_pid} /T 2>&1";
+                        } else {
+                            $kill_cmd = "kill -9 {$found_pid} 2>&1";
+                        }
                         exec($kill_cmd, $output, $kill_return);
                         $stop_log .= "Killed PID {$found_pid}: " . implode(' ', $output) . "\n";
-                        $output = array();
                         $killed++;
                     }
                 }

@@ -1,0 +1,171 @@
+name: Build AshMaize Libraries
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      matrix:
+        platform:
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: dll
+
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            ext: so
+
+          # macOS Intel
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            ext: dylib
+
+          # macOS Apple Silicon (M1/M2/M3)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            ext: dylib
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: rust-wrapper/target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build library
+        working-directory: rust-wrapper
+        run: cargo build --release --target ${{ matrix.platform.target }}
+
+      - name: Copy library to bin/ (Windows)
+        if: matrix.platform.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p bin
+          cp rust-wrapper/target/${{ matrix.platform.target }}/release/ashmaize_capi.${{ matrix.platform.ext }} bin/
+
+      - name: Copy library to bin/ (Unix)
+        if: matrix.platform.os != 'windows-latest'
+        run: |
+          mkdir -p bin
+          cp rust-wrapper/target/${{ matrix.platform.target }}/release/libashmaize_capi.${{ matrix.platform.ext }} bin/ashmaize_capi.${{ matrix.platform.ext }}
+
+      - name: Generate SHA256 hash
+        shell: bash
+        run: |
+          cd bin
+          if command -v sha256sum &> /dev/null; then
+            sha256sum ashmaize_capi.${{ matrix.platform.ext }} > ashmaize_capi.${{ matrix.platform.ext }}.sha256
+          elif command -v shasum &> /dev/null; then
+            shasum -a 256 ashmaize_capi.${{ matrix.platform.ext }} > ashmaize_capi.${{ matrix.platform.ext }}.sha256
+          else
+            echo "No SHA256 tool found"
+            exit 1
+          fi
+          cat ashmaize_capi.${{ matrix.platform.ext }}.sha256
+
+      - name: Upload compiled library
+        uses: actions/upload-artifact@v4
+        with:
+          name: ashmaize_capi-${{ matrix.platform.target }}
+          path: |
+            bin/ashmaize_capi.${{ matrix.platform.ext }}
+            bin/ashmaize_capi.${{ matrix.platform.ext }}.sha256
+          retention-days: 30
+
+  create-release:
+    name: Create Release with All Libraries
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure
+        run: ls -R artifacts
+
+      - name: Create release directory
+        run: |
+          mkdir -p release/bin
+          find artifacts -name "ashmaize_capi.*" -exec cp {} release/bin/ \;
+          ls -lah release/bin/
+
+      - name: Create release archive
+        run: |
+          cd release
+          tar czf ashmaize-libraries-all-platforms.tar.gz bin/
+          cd ..
+
+      - name: Generate release notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          # AshMaize Libraries - All Platforms
+
+          Pre-compiled AshMaize FFI libraries for all supported platforms.
+
+          ## Included Libraries:
+          - `ashmaize_capi.dll` - Windows x86_64
+          - `ashmaize_capi.so` - Linux x86_64
+          - `ashmaize_capi.dylib` - macOS Intel (x86_64)
+          - `ashmaize_capi.dylib` - macOS Apple Silicon (aarch64) *same name, different arch*
+
+          ## SHA256 Hashes:
+          All libraries include `.sha256` files for verification.
+
+          ## Installation:
+          1. Download the appropriate library for your platform
+          2. Place in `umbrella-mines/bin/` directory
+          3. Verify the SHA256 hash matches
+
+          ## Building from Source:
+          ```bash
+          cd rust-wrapper
+          cargo build --release
+          ```
+
+          Built with ❤️ by Umbrella Mines
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: libraries-${{ github.sha }}
+          name: AshMaize Libraries (Build ${{ github.run_number }})
+          body_path: release-notes.md
+          files: |
+            release/bin/*
+            release/ashmaize-libraries-all-platforms.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
