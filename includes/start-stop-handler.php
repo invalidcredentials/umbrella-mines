@@ -40,13 +40,47 @@ function umbrella_mines_handle_action($action, $log_file) {
             }
         }
 
-        // Find the site's php.ini
+        // Find the site's php.ini by matching the site path
         $php_ini = '';
         $site_id_dirs = glob('C:/Users/' . $username . '/AppData/Roaming/Local/run/*', GLOB_ONLYDIR);
+
+        // Try to match based on the site's actual path
+        // ABSPATH looks like: C:\Users\pb\Local Sites\umbrella-mine\app\public/
+        // nginx conf has: C:/Users/pb/Local Sites/umbrella-mine/app/public
+        $current_site_path = rtrim(str_replace('\\', '/', ABSPATH), '/');
+
+        file_put_contents($log_file, "Looking for site with path: $current_site_path\n", FILE_APPEND);
+
         foreach ($site_id_dirs as $dir) {
-            if (file_exists($dir . '/conf/php/php.ini')) {
-                $php_ini = $dir . '/conf/php/php.ini';
-                break;
+            $site_conf = $dir . '/conf/nginx/site.conf';
+            if (file_exists($site_conf)) {
+                $conf_content = file_get_contents($site_conf);
+                file_put_contents($log_file, "Checking $dir\n", FILE_APPEND);
+
+                // Extract the root path from nginx config
+                if (preg_match('/root\s+"([^"]+)";/', $conf_content, $matches)) {
+                    $nginx_root = rtrim($matches[1], '/');
+                    file_put_contents($log_file, "  Found root: $nginx_root\n", FILE_APPEND);
+
+                    if ($nginx_root === $current_site_path) {
+                        $php_ini = $dir . '/conf/php/php.ini';
+                        file_put_contents($log_file, "  MATCH! Using: $php_ini\n", FILE_APPEND);
+                        if (file_exists($php_ini)) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: just find ANY php.ini if we couldn't match
+        if (!$php_ini) {
+            file_put_contents($log_file, "WARNING: Could not match site, using first php.ini found\n", FILE_APPEND);
+            foreach ($site_id_dirs as $dir) {
+                if (file_exists($dir . '/conf/php/php.ini')) {
+                    $php_ini = $dir . '/conf/php/php.ini';
+                    break;
+                }
             }
         }
 
