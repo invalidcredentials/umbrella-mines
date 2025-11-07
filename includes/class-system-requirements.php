@@ -207,12 +207,13 @@ class Umbrella_Mines_System_Requirements {
             $library_path = $bin_dir . 'ashmaize_capi.dll';
         } elseif ($os === 'DAR') {
             // macOS - check both architectures
-            $intel_lib = $bin_dir . 'ashmaize_capi.dylib';
-            $arm_lib = $bin_dir . 'ashmaize_capi_arm.dylib';
+            $intel_lib = $bin_dir . 'ashmaize_capi_x86_64.dylib';
+            $arm_lib = $bin_dir . 'ashmaize_capi_aarch64.dylib';
+            $generic_lib = $bin_dir . 'ashmaize_capi.dylib';
 
-            if (file_exists($intel_lib) || file_exists($arm_lib)) {
+            if (file_exists($intel_lib) || file_exists($arm_lib) || file_exists($generic_lib)) {
                 $library_found = true;
-                $library_path = file_exists($intel_lib) ? $intel_lib : $arm_lib;
+                $library_path = file_exists($intel_lib) ? $intel_lib : (file_exists($arm_lib) ? $arm_lib : $generic_lib);
             }
         } else {
             // Linux

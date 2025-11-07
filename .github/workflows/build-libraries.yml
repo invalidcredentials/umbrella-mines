@@ -31,11 +31,13 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             ext: dylib
+            arch: x86_64
 
           # macOS Apple Silicon (M1/M2/M3)
           - os: macos-latest
             target: aarch64-apple-darwin
             ext: dylib
+            arch: aarch64
 
     steps:
       - name: Checkout code
@@ -79,29 +81,35 @@ jobs:
         if: matrix.platform.os != 'windows-latest'
         run: |
           mkdir -p bin
-          cp rust-wrapper/target/${{ matrix.platform.target }}/release/libashmaize_capi.${{ matrix.platform.ext }} bin/ashmaize_capi.${{ matrix.platform.ext }}
+          if [ "${{ matrix.platform.arch }}" != "" ]; then
+            cp rust-wrapper/target/${{ matrix.platform.target }}/release/libashmaize_capi.${{ matrix.platform.ext }} bin/ashmaize_capi_${{ matrix.platform.arch }}.${{ matrix.platform.ext }}
+          else
+            cp rust-wrapper/target/${{ matrix.platform.target }}/release/libashmaize_capi.${{ matrix.platform.ext }} bin/ashmaize_capi.${{ matrix.platform.ext }}
+          fi
 
       - name: Generate SHA256 hash
         shell: bash
         run: |
           cd bin
-          if command -v sha256sum &> /dev/null; then
-            sha256sum ashmaize_capi.${{ matrix.platform.ext }} > ashmaize_capi.${{ matrix.platform.ext }}.sha256
-          elif command -v shasum &> /dev/null; then
-            shasum -a 256 ashmaize_capi.${{ matrix.platform.ext }} > ashmaize_capi.${{ matrix.platform.ext }}.sha256
-          else
-            echo "No SHA256 tool found"
-            exit 1
-          fi
-          cat ashmaize_capi.${{ matrix.platform.ext }}.sha256
+          for file in ashmaize_capi*.${{ matrix.platform.ext }}; do
+            if command -v sha256sum &> /dev/null; then
+              sha256sum "$file" > "$file.sha256"
+            elif command -v shasum &> /dev/null; then
+              shasum -a 256 "$file" > "$file.sha256"
+            else
+              echo "No SHA256 tool found"
+              exit 1
+            fi
+            cat "$file.sha256"
+          done
 
       - name: Upload compiled library
         uses: actions/upload-artifact@v4
         with:
           name: ashmaize_capi-${{ matrix.platform.target }}
           path: |
-            bin/ashmaize_capi.${{ matrix.platform.ext }}
-            bin/ashmaize_capi.${{ matrix.platform.ext }}.sha256
+            bin/ashmaize_capi*.${{ matrix.platform.ext }}
+            bin/ashmaize_capi*.${{ matrix.platform.ext }}.sha256
           retention-days: 30
 
   create-release:
