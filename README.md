@@ -1,8 +1,8 @@
 # UMBRELLA MINES $NIGHT MINER
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
-![PHP](https://img.shields.io/badge/PHP-8.0%2B-777BB4.svg)
+![PHP](https://img.shields.io/badge/PHP-8.3.17-777BB4.svg)
 
 **A plug-and-play NIGHT mining solution built entirely on WordPress.**
 
@@ -41,13 +41,15 @@ Shared hosting providers typically **block or kill** long-running PHP processes 
 **You don't even need a real website** - Local runs entirely on your machine. It's the fastest path from zero to mining.
 
 **System Requirements:**
-- Windows (currently - Linux/Mac support planned)
-- PHP 8.0+ with FFI extension enabled
+- Windows, Linux, or macOS
+- **PHP 8.3.17 EXACTLY** (required for Rust FFI compatibility)
+- FFI extension enabled
 - **IMPORTANT:** PHP version MUST match between PHP-CLI and php.ini configuration
   - If using Local by Flywheel, ensure site's PHP version matches lightning-services PHP version
   - Mismatched versions will cause "Error establishing a database connection"
 - 2GB+ available RAM
 - WP-CLI access (included with Local by Flywheel)
+- AshMaize library for your platform (Windows: .dll, Linux: .so, macOS: .dylib)
 
 ---
 
@@ -78,8 +80,31 @@ This started as an experiment: "What can we build with old tech and lightweight 
 ### One-Click Mining
 No configuration. No command-line. Just click "START MINING" and watch it work.
 
+### Smart Export System (NEW in v0.3.0)
+- Export all your mining data (wallets, solutions, receipts) in one click
+- Only exports completed work (submitted/confirmed solutions)
+- Warns you if pending solutions need submission first
+- Wallet-centric JSON structure with all critical data
+- Contains private keys and crypto receipts for claiming NIGHT rewards
+- Identical export functionality on Wallets and Solutions pages
+
+### System Requirements Checker (NEW in v0.3.0)
+- Automatic validation of all dependencies on dashboard load
+- Checks PHP version (8.3.17), FFI extension, libraries, and permissions
+- Collapsible panel with detailed status for each requirement
+- Platform-specific installation instructions for missing dependencies
+- Prevents wasted time troubleshooting - know what's missing instantly
+- Special support for Linux/Ubuntu stripped installations
+
 ### Auto-Submit Solutions
 Toggle auto-submission to automatically send found solutions to the Midnight Scavenger API. Or review and submit them manually - your choice.
+
+### Enhanced UI/UX (NEW in v0.3.0)
+- Matrix-themed design with floating umbrella icons
+- Improved Start/Stop mining buttons with better spacing and visual feedback
+- Color-matched export buttons to green theme
+- Styled warning modals for better user experience
+- Consistent cyberpunk aesthetic across all pages
 
 ### Smart Start/Stop Controls
 Graceful process management with real-time status updates. Stop mining instantly with proper cleanup - no orphaned processes.
