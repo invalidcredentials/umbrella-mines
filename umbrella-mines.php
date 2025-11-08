@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.3.1
+ * Version: 0.3.2
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('UMBRELLA_MINES_VERSION', '0.3.1');
+define('UMBRELLA_MINES_VERSION', '0.3.2');
 define('UMBRELLA_MINES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('UMBRELLA_MINES_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('UMBRELLA_MINES_DATA_DIR', WP_CONTENT_DIR . '/uploads/umbrella-mines');
@@ -57,11 +57,19 @@ class Umbrella_Mines {
 
         // Dashboard AJAX hooks
         add_action('wp_ajax_umbrella_toggle_autosubmit', array($this, 'ajax_toggle_autosubmit'));
+        add_action('wp_ajax_umbrella_toggle_public_display', array($this, 'ajax_toggle_public_display'));
+        add_action('wp_ajax_umbrella_save_mine_name', array($this, 'ajax_save_mine_name'));
         add_action('wp_ajax_umbrella_start_mining_live', array($this, 'ajax_start_mining_live'));
         add_action('wp_ajax_umbrella_stop_mining_live', array($this, 'ajax_stop_mining_live'));
         add_action('wp_ajax_umbrella_get_mining_status_live', array($this, 'ajax_get_mining_status_live'));
+        add_action('wp_ajax_umbrella_get_terminal_output', array($this, 'ajax_get_terminal_output'));
+        add_action('wp_ajax_umbrella_send_stop_signal', array($this, 'ajax_send_stop_signal'));
         add_action('wp_ajax_umbrella_check_export_allowed', array($this, 'ajax_check_export_allowed'));
         add_action('wp_ajax_umbrella_export_all_data', array($this, 'ajax_export_all_data'));
+
+        // Public display hooks
+        add_action('init', array($this, 'register_public_display_rewrite'));
+        add_action('template_redirect', array($this, 'handle_public_display_page'));
 
         // WP-CLI commands
         if (defined('WP_CLI') && WP_CLI) {
@@ -218,6 +226,15 @@ class Umbrella_Mines {
             KEY idx_started (started_at)
         ) $charset_collate;";
 
+        // Table 9: NIGHT rates by day (cached from API)
+        $table_night_rates = $wpdb->prefix . 'umbrella_night_rates';
+        $sql_night_rates = "CREATE TABLE {$table_night_rates} (
+            day int NOT NULL,
+            star_per_receipt bigint(20) NOT NULL,
+            fetched_at datetime DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (day)
+        ) $charset_collate;";
+
         // Create tables
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql_wallets);
@@ -228,6 +245,7 @@ class Umbrella_Mines {
         dbDelta($sql_jobs);
         dbDelta($sql_progress);
         dbDelta($sql_processes);
+        dbDelta($sql_night_rates);
 
         // Set default config
         $this->set_default_config();
@@ -266,12 +284,18 @@ class Umbrella_Mines {
                 ), array('%s', '%s'));
             }
         }
+
+        // Register rewrite rules and flush
+        $this->register_public_display_rewrite();
+        flush_rewrite_rules();
     }
 
     /**
      * Plugin deactivation
      */
     public function deactivate() {
+        // Clean up rewrite rules
+        flush_rewrite_rules();
         // Clear cron
         wp_clear_scheduled_hook('umbrella_mines_process_jobs');
     }
@@ -654,6 +678,71 @@ class Umbrella_Mines {
         );
 
         wp_send_json_success(array('enabled' => $enabled));
+    }
+
+    /**
+     * AJAX: Toggle public display
+     */
+    public function ajax_toggle_public_display() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $enabled = isset($_POST['enabled']) ? $_POST['enabled'] : '0';
+        update_option('umbrella_public_display_enabled', $enabled);
+
+        // Flush rewrite rules to activate/deactivate the endpoint
+        flush_rewrite_rules();
+
+        wp_send_json_success(array('enabled' => $enabled));
+    }
+
+    /**
+     * AJAX: Save mine name
+     */
+    public function ajax_save_mine_name() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $mine_name = isset($_POST['mine_name']) ? sanitize_text_field($_POST['mine_name']) : '';
+
+        // Default to "Umbrella Mines" if empty
+        if (empty($mine_name)) {
+            $mine_name = 'Umbrella Mines';
+        }
+
+        update_option('umbrella_mine_name', $mine_name);
+
+        wp_send_json_success(array('mine_name' => $mine_name));
+    }
+
+    /**
+     * Register URL rewrite for /umbrella-mines
+     */
+    public function register_public_display_rewrite() {
+        add_rewrite_rule('^umbrella-mines/?$', 'index.php?umbrella_mines_public=1', 'top');
+        add_rewrite_tag('%umbrella_mines_public%', '1');
+    }
+
+    /**
+     * Handle public display page
+     */
+    public function handle_public_display_page() {
+        if (get_query_var('umbrella_mines_public') === '1') {
+            // Check if public display is enabled
+            if (get_option('umbrella_public_display_enabled', '0') !== '1') {
+                wp_die('Public display is not enabled.', 'Umbrella Mines - Disabled', array('response' => 403));
+            }
+
+            // Load the public template
+            include UMBRELLA_MINES_PLUGIN_DIR . 'public/mining-display.php';
+            exit;
+        }
     }
 
     /**
@@ -1404,6 +1493,72 @@ class Umbrella_Mines {
             'last_modified' => $last_modified,
             'seconds_since_update' => $seconds_since_update
         ));
+    }
+
+    /**
+     * AJAX handler to get just terminal output (lightweight)
+     */
+    public function ajax_get_terminal_output() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $log_file = WP_CONTENT_DIR . '/umbrella-mines-output.log';
+        $output = '';
+        $is_mining = false;
+
+        if (file_exists($log_file) && filesize($log_file) > 0) {
+            // Read last 100 lines efficiently
+            $lines = file($log_file);
+            if ($lines !== false) {
+                $total_lines = count($lines);
+                if ($total_lines > 100) {
+                    $output = "... [showing last 100 lines of {$total_lines} total]\n\n";
+                    $output .= implode('', array_slice($lines, -100));
+                } else {
+                    $output = implode('', $lines);
+                }
+
+                // Check for stop signal in recent content
+                $recent_content = implode('', array_slice($lines, -50));
+                if (strpos($recent_content, 'Stop signal received. Mining stopped gracefully') !== false) {
+                    $is_mining = false;
+                } else {
+                    // Check file modification time
+                    $last_modified = filemtime($log_file);
+                    $is_mining = (time() - $last_modified) < 60;
+                }
+            }
+        }
+
+        wp_send_json_success(array(
+            'output' => esc_html($output),
+            'is_mining' => $is_mining,
+            'status' => $is_mining ? 'ACTIVE' : 'IDLE'
+        ));
+    }
+
+    /**
+     * AJAX handler to send graceful stop signal to mining process
+     */
+    public function ajax_send_stop_signal() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        // Create the stop flag file
+        $stop_file = WP_CONTENT_DIR . '/umbrella-mines-stop.flag';
+        $result = file_put_contents($stop_file, '1');
+
+        if ($result !== false) {
+            wp_send_json_success('Stop signal sent');
+        } else {
+            wp_send_json_error('Failed to create stop signal file');
+        }
     }
 }
 

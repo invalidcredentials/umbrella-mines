@@ -63,26 +63,66 @@ $current_challenge = $wpdb->get_row("
     LIMIT 1
 ");
 
-// Fetch NIGHT rates from API (cached for 1 hour)
-$night_rates_cache = get_transient('umbrella_night_rates');
-if ($night_rates_cache === false) {
-    $response = wp_remote_get('https://scavenger.prod.gd.midnighttge.io/work_to_star_rate', array('timeout' => 10));
+// Fetch NIGHT rates from database or API
+// Check if we have rates in DB (fetched in last 24 hours)
+$night_rates_cache = array();
+$db_rates = $wpdb->get_results("
+    SELECT day, star_per_receipt
+    FROM {$wpdb->prefix}umbrella_night_rates
+    WHERE fetched_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+    ORDER BY day ASC
+");
+
+if (!empty($db_rates)) {
+    // Use database rates
+    foreach ($db_rates as $rate) {
+        $night_rates_cache[(int)$rate->day - 1] = (int)$rate->star_per_receipt;
+    }
+} else {
+    // Fetch from API and store in database
+    $response = wp_remote_get('https://scavenger.prod.gd.midnighttge.io/work_to_star_rate', array(
+        'timeout' => 10,
+        'sslverify' => false
+    ));
+
     if (!is_wp_error($response)) {
-        $night_rates_cache = json_decode(wp_remote_retrieve_body($response), true);
-        set_transient('umbrella_night_rates', $night_rates_cache, 3600);
+        $api_rates = json_decode(wp_remote_retrieve_body($response), true);
+        if (is_array($api_rates)) {
+            // Clear old rates
+            $wpdb->query("TRUNCATE TABLE {$wpdb->prefix}umbrella_night_rates");
+
+            // Insert new rates
+            foreach ($api_rates as $day_index => $star_amount) {
+                $day = $day_index + 1; // Day 1, 2, 3, etc.
+                $wpdb->insert(
+                    $wpdb->prefix . 'umbrella_night_rates',
+                    array(
+                        'day' => $day,
+                        'star_per_receipt' => $star_amount
+                    ),
+                    array('%d', '%d')
+                );
+                $night_rates_cache[$day_index] = (int)$star_amount;
+            }
+        }
     } else {
-        $night_rates_cache = array();
+        error_log('NIGHT rates API error: ' . $response->get_error_message());
     }
 }
 
-// Calculate total NIGHT earned
+// Calculate total NIGHT earned - join receipts with their actual challenge days
 $total_star = 0;
-if ($night_rates_cache && $current_challenge) {
-    $current_day = (int)$current_challenge->day;
-    if ($current_day > 0 && isset($night_rates_cache[$current_day - 1])) {
-        $star_per_receipt = $night_rates_cache[$current_day - 1];
-        $total_star = $stats['total_receipts'] * $star_per_receipt;
-    }
+$night_calculation = $wpdb->get_results("
+    SELECT c.day, COUNT(r.id) as receipt_count, n.star_per_receipt
+    FROM {$wpdb->prefix}umbrella_mining_receipts r
+    INNER JOIN {$wpdb->prefix}umbrella_mining_solutions s ON r.solution_id = s.id
+    INNER JOIN {$wpdb->prefix}umbrella_mining_challenges c ON s.challenge_id = c.challenge_id
+    INNER JOIN {$wpdb->prefix}umbrella_night_rates n ON c.day = n.day
+    GROUP BY c.day, n.star_per_receipt
+");
+
+foreach ($night_calculation as $row) {
+    $total_star += (int)$row->receipt_count * (int)$row->star_per_receipt;
 }
 $total_night = $total_star / 1000000;
 
@@ -91,23 +131,65 @@ $log_file = WP_CONTENT_DIR . '/umbrella-mines-output.log';
 $is_mining = false;
 $mining_output = '';
 
-// Check if mining is active by checking if log file was recently modified
-$is_mining = false;
+// Check if mining is active by looking for stop signal
 if (file_exists($log_file) && filesize($log_file) > 0) {
-    $last_modified = filemtime($log_file);
-    $is_mining = (time() - $last_modified) < 60;
+    // Read last 50 lines to check for stop signal
+    $lines = file($log_file);
+    if ($lines !== false) {
+        $check_lines = array_slice($lines, -50);
+        $recent_content = implode('', $check_lines);
+
+        // If we see the stop signal, mining is NOT active
+        if (strpos($recent_content, 'Stop signal received. Mining stopped gracefully') !== false) {
+            $is_mining = false;
+        } else {
+            // Otherwise check if file was recently modified (active mining)
+            $last_modified = filemtime($log_file);
+            $is_mining = (time() - $last_modified) < 60;
+        }
+    }
 }
 
 if (file_exists($log_file)) {
     // Only show last 100 lines to prevent page freeze
-    $lines = file($log_file);
-    if ($lines !== false) {
-        $total_lines = count($lines);
-        if ($total_lines > 100) {
-            $mining_output = "... [showing last 100 lines of {$total_lines} total]\n\n";
-            $mining_output .= implode('', array_slice($lines, -100));
-        } else {
-            $mining_output = implode('', $lines);
+    $file_size = filesize($log_file);
+
+    // Rotate log if it gets too large (over 1MB)
+    if ($file_size > 1000000) {
+        // Keep only last 200 lines
+        $all_lines = file($log_file);
+        if ($all_lines !== false) {
+            $kept_lines = array_slice($all_lines, -200);
+            file_put_contents($log_file, "... [log rotated - older entries removed]\n\n" . implode('', $kept_lines));
+            $file_size = filesize($log_file);
+        }
+    }
+
+    // For files larger than 500KB, read from end to avoid memory issues
+    if ($file_size > 500000) {
+        $handle = fopen($log_file, 'r');
+        // Jump to last 200KB of file
+        fseek($handle, -200000, SEEK_END);
+        // Skip partial line
+        fgets($handle);
+        // Read remaining lines
+        $content = stream_get_contents($handle);
+        fclose($handle);
+
+        $lines = explode("\n", $content);
+        $lines = array_slice($lines, -100);
+        $mining_output = "... [showing last 100 lines of large log file]\n\n" . implode("\n", $lines);
+    } else {
+        // For smaller files, use normal method
+        $lines = file($log_file);
+        if ($lines !== false) {
+            $total_lines = count($lines);
+            if ($total_lines > 100) {
+                $mining_output = "... [showing last 100 of {$total_lines} lines]\n\n";
+                $mining_output .= implode('', array_slice($lines, -100));
+            } else {
+                $mining_output = implode('', $lines);
+            }
         }
     }
 }
@@ -120,6 +202,37 @@ if (file_exists($log_file)) {
             <span class="pulse"></span>
             <?php echo $is_mining ? 'MINING ACTIVE' : 'IDLE'; ?>
         </div>
+    </div>
+
+    <!-- Public Display Toggle -->
+    <div class="public-display-card">
+        <div class="public-display-header">
+            <div class="public-display-info">
+                <h3>🌐 PUBLIC DISPLAY</h3>
+                <p>Share your mining stats with the world at <strong><?php echo home_url('/umbrella-mines'); ?></strong></p>
+            </div>
+            <div class="public-display-toggle">
+                <label class="toggle-switch-small">
+                    <input type="checkbox" id="public-display-toggle" <?php echo (get_option('umbrella_public_display_enabled', '0') === '1') ? 'checked' : ''; ?>>
+                    <span class="toggle-slider-small"></span>
+                </label>
+                <span class="toggle-label-text"><?php echo (get_option('umbrella_public_display_enabled', '0') === '1') ? 'LIVE' : 'OFF'; ?></span>
+            </div>
+        </div>
+        <?php if (get_option('umbrella_public_display_enabled', '0') === '1'): ?>
+        <div class="public-display-options">
+            <div class="mine-name-input">
+                <label for="mine-name">Mine Name:</label>
+                <input type="text" id="mine-name" placeholder="Umbrella Mines" value="<?php echo esc_attr(get_option('umbrella_mine_name', 'Umbrella Mines')); ?>" maxlength="50">
+                <button id="save-mine-name" class="save-mine-name-btn">SAVE</button>
+            </div>
+        </div>
+        <div class="public-display-link">
+            <a href="<?php echo home_url('/umbrella-mines'); ?>" target="_blank" class="view-public-btn">
+                VIEW PUBLIC DISPLAY →
+            </a>
+        </div>
+        <?php endif; ?>
     </div>
 
     <!-- Stats Grid -->
@@ -284,6 +397,16 @@ if (file_exists($log_file)) {
                 <span id="terminal-pid" class="terminal-pid"></span>
                 <span id="terminal-status" class="terminal-status"><?php echo $is_mining ? 'ACTIVE' : 'IDLE'; ?></span>
                 <span id="terminal-countdown" class="terminal-countdown"></span>
+                <button id="stop-signal-btn" class="stop-signal-btn" title="Send stop signal">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="6" y="6" width="12" height="12" rx="2"/>
+                    </svg>
+                </button>
+                <button id="refresh-terminal" class="refresh-terminal-btn" title="Refresh output">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                    </svg>
+                </button>
             </div>
         </div>
         <div id="mining-terminal" class="terminal-output">
@@ -302,6 +425,50 @@ No mining activity. Start mining to see live output.
 
 <script>
 jQuery(document).ready(function($) {
+    // Stop signal button
+    $('#stop-signal-btn').on('click', function() {
+        if (!confirm('Send graceful stop signal to mining process?')) {
+            return;
+        }
+
+        var $btn = $(this);
+        $btn.prop('disabled', true).css('opacity', '0.5');
+
+        // Send graceful stop signal by creating the stop flag file
+        $.ajax({
+            url: ajaxurl,
+            method: 'POST',
+            data: {
+                action: 'umbrella_send_stop_signal',
+                nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+            },
+            success: function(response) {
+                if (response.success) {
+                    alert('Stop signal sent! Mining will stop gracefully after current attempt.');
+                    setTimeout(function() { location.reload(); }, 2000);
+                } else {
+                    alert('Failed to send stop signal: ' + (response.data || 'Unknown error'));
+                    $btn.prop('disabled', false).css('opacity', '1');
+                }
+            },
+            error: function() {
+                alert('Failed to send stop signal');
+                $btn.prop('disabled', false).css('opacity', '1');
+            }
+        });
+    });
+
+    // Refresh terminal button
+    $('#refresh-terminal').on('click', function() {
+        var $btn = $(this);
+        $btn.addClass('spinning');
+
+        // Simply reload the page to get fresh data
+        setTimeout(function() {
+            location.reload();
+        }, 300);
+    });
+
     // Start button
     $('#start-btn').on('click', function() {
         $('#start-btn, #stop-btn').prop('disabled', true);
@@ -353,29 +520,149 @@ jQuery(document).ready(function($) {
         });
     });
 
-    // Auto-refresh terminal output when mining is active
-    <?php if ($is_mining): ?>
-    setInterval(function() {
+    // Public display toggle
+    $('#public-display-toggle').on('change', function() {
+        var enabled = $(this).is(':checked') ? '1' : '0';
+        var $labelText = $('.toggle-label-text');
+        $labelText.text(enabled === '1' ? 'LIVE' : 'OFF');
+
         $.ajax({
-            url: window.location.href,
-            timeout: 2000,
-            success: function(data) {
-                try {
-                    var newOutput = $(data).find('#mining-terminal').html();
-                    if (newOutput) {
-                        $('#mining-terminal').html(newOutput);
-                        var terminal = document.getElementById('mining-terminal');
-                        terminal.scrollTop = terminal.scrollHeight;
-                    }
-                } catch(e) {
-                    console.log('Error updating terminal:', e);
+            url: ajaxurl,
+            method: 'POST',
+            data: {
+                action: 'umbrella_toggle_public_display',
+                enabled: enabled,
+                nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+            },
+            success: function(response) {
+                if (response.success) {
+                    console.log('Public display toggled:', enabled);
+                    // Reload page to show/hide the link
+                    location.reload();
                 }
             },
             error: function() {
-                console.log('Failed to refresh terminal output');
+                console.log('Failed to toggle public display');
+                // Revert toggle on error
+                $('#public-display-toggle').prop('checked', !$('#public-display-toggle').is(':checked'));
+                $labelText.text(enabled === '0' ? 'LIVE' : 'OFF');
             }
         });
+    });
+
+    // Save mine name
+    $('#save-mine-name').on('click', function() {
+        var mineName = $('#mine-name').val().trim();
+        var $btn = $(this);
+        var originalText = $btn.text();
+
+        $btn.text('SAVING...').prop('disabled', true);
+
+        $.ajax({
+            url: ajaxurl,
+            method: 'POST',
+            data: {
+                action: 'umbrella_save_mine_name',
+                mine_name: mineName,
+                nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+            },
+            success: function(response) {
+                if (response.success) {
+                    $btn.text('SAVED!');
+                    setTimeout(function() {
+                        $btn.text(originalText).prop('disabled', false);
+                    }, 1500);
+                }
+            },
+            error: function() {
+                $btn.text('ERROR');
+                setTimeout(function() {
+                    $btn.text(originalText).prop('disabled', false);
+                }, 1500);
+            }
+        });
+    });
+
+    // Auto-refresh just the terminal content (not whole page) when mining is active
+    <?php if ($is_mining): ?>
+    var terminalRefreshInProgress = false;
+    var lastRefreshTime = Date.now();
+    var stuckCheckInterval = null;
+
+    // Check if refresh is stuck (request never returned)
+    stuckCheckInterval = setInterval(function() {
+        try {
+            var timeSinceLastRefresh = Date.now() - lastRefreshTime;
+
+            // If a request has been "in progress" for more than 10 seconds, it's stuck
+            if (terminalRefreshInProgress && timeSinceLastRefresh > 10000) {
+                console.log('Terminal refresh appears stuck - resetting');
+                terminalRefreshInProgress = false;
+            }
+        } catch (e) {
+            // If anything fails in watchdog, reset and continue
+            terminalRefreshInProgress = false;
+        }
     }, 5000);
+
+    setInterval(function() {
+        try {
+            // Don't start a new request if one is already in progress - just skip and try next interval
+            if (terminalRefreshInProgress) {
+                return;
+            }
+
+            terminalRefreshInProgress = true;
+            lastRefreshTime = Date.now();
+
+            $.ajax({
+                url: '<?php echo admin_url('admin-ajax.php'); ?>',
+                method: 'POST',
+                data: {
+                    action: 'umbrella_get_terminal_output',
+                    nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+                },
+                timeout: 5000,
+                success: function(response) {
+                    try {
+                        terminalRefreshInProgress = false;
+                        lastRefreshTime = Date.now();
+
+                        if (response.success && response.data.output) {
+                            $('#mining-terminal').html(response.data.output);
+                            var terminal = document.getElementById('mining-terminal');
+                            if (terminal) {
+                                terminal.scrollTop = terminal.scrollHeight;
+                            }
+
+                            // Update status
+                            if (response.data.status) {
+                                $('#terminal-status').text(response.data.status);
+                            }
+                        }
+                    } catch (e) {
+                        // Reset flag even if success handler fails
+                        terminalRefreshInProgress = false;
+                        lastRefreshTime = Date.now();
+                    }
+                },
+                error: function(xhr, status, error) {
+                    terminalRefreshInProgress = false;
+                    lastRefreshTime = Date.now();
+                    // Just silently fail and try again next interval
+                },
+                complete: function() {
+                    // Absolute safety net - always reset flag no matter what
+                    terminalRefreshInProgress = false;
+                    lastRefreshTime = Date.now();
+                }
+            });
+        } catch (e) {
+            // If the entire interval fails, reset and continue
+            terminalRefreshInProgress = false;
+            lastRefreshTime = Date.now();
+        }
+    }, 3000); // Every 3 seconds
     <?php endif; ?>
 
     // Scroll terminal to bottom on load
@@ -538,6 +825,199 @@ jQuery(document).ready(function($) {
         font-size: 12px;
         color: #666;
         letter-spacing: 0.5px;
+    }
+
+    /* Public Display Card */
+    .public-display-card {
+        background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
+        border: 2px solid #00ff41;
+        border-radius: 8px;
+        padding: 20px 25px;
+        margin-bottom: 30px;
+        box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+    }
+
+    .public-display-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+    }
+
+    .public-display-info h3 {
+        margin: 0 0 8px 0;
+        font-size: 18px;
+        font-weight: 700;
+        color: #00ff41;
+        letter-spacing: 2px;
+    }
+
+    .public-display-info p {
+        margin: 0;
+        font-size: 13px;
+        color: #888;
+    }
+
+    .public-display-info strong {
+        color: #00d4ff;
+        font-family: monospace;
+    }
+
+    .public-display-toggle {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .toggle-label-text {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: #666;
+        min-width: 40px;
+    }
+
+    /* Small Toggle Switch */
+    .toggle-switch-small {
+        position: relative;
+        display: inline-block;
+        width: 60px;
+        height: 30px;
+    }
+
+    .toggle-switch-small input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .toggle-slider-small {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(145deg, #2a2a2a 0%, #1a1a1a 100%);
+        border: 2px solid #333;
+        border-radius: 15px;
+        transition: 0.4s;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    .toggle-slider-small:before {
+        position: absolute;
+        content: "";
+        height: 20px;
+        width: 20px;
+        left: 3px;
+        bottom: 3px;
+        background: linear-gradient(145deg, #666 0%, #444 100%);
+        border-radius: 50%;
+        transition: 0.4s;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+    }
+
+    .toggle-switch-small input:checked + .toggle-slider-small {
+        background: linear-gradient(145deg, #00ff41 0%, #00cc33 100%);
+        border-color: #00ff41;
+        box-shadow: 0 0 15px rgba(0, 255, 65, 0.4);
+    }
+
+    .toggle-switch-small input:checked + .toggle-slider-small:before {
+        transform: translateX(30px);
+        background: linear-gradient(145deg, #00aa2a 0%, #008822 100%);
+    }
+
+    .toggle-switch-small input:checked ~ .toggle-label-text {
+        color: #00ff41;
+    }
+
+    .public-display-link {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid #2a3f5f;
+    }
+
+    .view-public-btn {
+        display: inline-block;
+        padding: 10px 20px;
+        background: linear-gradient(145deg, #00ff41 0%, #00cc33 100%);
+        color: #000;
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 13px;
+        letter-spacing: 1px;
+        border-radius: 4px;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(0, 255, 65, 0.3);
+    }
+
+    .view-public-btn:hover {
+        background: linear-gradient(145deg, #00cc33 0%, #00aa2a 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(0, 255, 65, 0.4);
+    }
+
+    .public-display-options {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid #2a3f5f;
+    }
+
+    .mine-name-input {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .mine-name-input label {
+        font-size: 13px;
+        color: #00ff41;
+        font-weight: 600;
+        letter-spacing: 1px;
+    }
+
+    .mine-name-input input[type="text"] {
+        width: 300px;
+        padding: 8px 12px;
+        background: #0a0e27;
+        border: 1px solid #2a3f5f;
+        border-radius: 4px;
+        color: #fff;
+        font-size: 14px;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        transition: all 0.3s ease;
+    }
+
+    .mine-name-input input[type="text"]:focus {
+        outline: none;
+        border-color: #00ff41;
+        box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+    }
+
+    .save-mine-name-btn {
+        padding: 8px 16px;
+        background: linear-gradient(145deg, #00ff41 0%, #00cc33 100%);
+        color: #000;
+        border: none;
+        border-radius: 4px;
+        font-weight: 700;
+        font-size: 12px;
+        letter-spacing: 1px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(0, 255, 65, 0.3);
+    }
+
+    .save-mine-name-btn:hover {
+        background: linear-gradient(145deg, #00cc33 0%, #00aa2a 100%);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 255, 65, 0.4);
+    }
+
+    .save-mine-name-btn:active {
+        transform: translateY(0);
     }
 
     /* System Requirements Alert */
@@ -1050,6 +1530,59 @@ jQuery(document).ready(function($) {
         background: rgba(255, 255, 255, 0.05);
         border-radius: 4px;
         letter-spacing: 1px;
+    }
+
+    .refresh-terminal-btn {
+        background: rgba(0, 255, 65, 0.1);
+        border: 1px solid #00ff41;
+        border-radius: 4px;
+        padding: 6px 8px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #00ff41;
+    }
+
+    .refresh-terminal-btn:hover {
+        background: rgba(0, 255, 65, 0.2);
+        transform: rotate(180deg);
+    }
+
+    .refresh-terminal-btn:active {
+        transform: rotate(360deg);
+    }
+
+    .refresh-terminal-btn.spinning {
+        animation: spin 1s linear;
+    }
+
+    .stop-signal-btn {
+        background: rgba(255, 65, 65, 0.1);
+        border: 1px solid #ff4141;
+        border-radius: 4px;
+        padding: 6px 8px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #ff4141;
+    }
+
+    .stop-signal-btn:hover {
+        background: rgba(255, 65, 65, 0.2);
+        transform: scale(1.1);
+    }
+
+    .stop-signal-btn:active {
+        transform: scale(0.95);
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
     }
 
     .terminal-output {
