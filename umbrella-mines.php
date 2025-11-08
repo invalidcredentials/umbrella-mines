@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.3.2
+ * Version: 0.3.3
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('UMBRELLA_MINES_VERSION', '0.3.2');
+define('UMBRELLA_MINES_VERSION', '0.3.3');
 define('UMBRELLA_MINES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('UMBRELLA_MINES_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('UMBRELLA_MINES_DATA_DIR', WP_CONTENT_DIR . '/uploads/umbrella-mines');
@@ -1510,25 +1510,34 @@ class Umbrella_Mines {
         $is_mining = false;
 
         if (file_exists($log_file) && filesize($log_file) > 0) {
-            // Read last 100 lines efficiently
-            $lines = file($log_file);
-            if ($lines !== false) {
-                $total_lines = count($lines);
-                if ($total_lines > 100) {
-                    $output = "... [showing last 100 lines of {$total_lines} total]\n\n";
-                    $output .= implode('', array_slice($lines, -100));
-                } else {
-                    $output = implode('', $lines);
-                }
+            $last_modified = filemtime($log_file);
+            $time_since_modified = time() - $last_modified;
+
+            // Skip reading if file was modified in last 0.5 seconds (heavy write activity)
+            // This prevents blocking when solution is found or wallet is switching
+            if ($time_since_modified < 0.5) {
+                // File is being actively written to - skip this read, return empty to use cached content
+                wp_send_json_success(array(
+                    'output' => '',
+                    'is_mining' => true,
+                    'status' => 'ACTIVE',
+                    'skipped' => true // Let client know we skipped
+                ));
+                return;
+            }
+
+            // Read last 100 lines efficiently without loading entire file
+            $lines = $this->read_last_lines($log_file, 100);
+
+            if (!empty($lines)) {
+                $output = implode('', $lines);
 
                 // Check for stop signal in recent content
                 $recent_content = implode('', array_slice($lines, -50));
                 if (strpos($recent_content, 'Stop signal received. Mining stopped gracefully') !== false) {
                     $is_mining = false;
                 } else {
-                    // Check file modification time
-                    $last_modified = filemtime($log_file);
-                    $is_mining = (time() - $last_modified) < 60;
+                    $is_mining = $time_since_modified < 60;
                 }
             }
         }
@@ -1538,6 +1547,58 @@ class Umbrella_Mines {
             'is_mining' => $is_mining,
             'status' => $is_mining ? 'ACTIVE' : 'IDLE'
         ));
+    }
+
+    /**
+     * Read last N lines from file without loading entire file into memory
+     * Works on all OS (Windows, Linux, macOS)
+     */
+    public function read_last_lines($file, $lines = 100) {
+        $buffer_size = 4096;
+        $output = array();
+
+        $fp = fopen($file, 'rb');
+        if (!$fp) {
+            return $output;
+        }
+
+        // Get file size
+        fseek($fp, 0, SEEK_END);
+        $file_size = ftell($fp);
+
+        // Start from end of file
+        $pos = $file_size;
+        $buffer = '';
+        $line_count = 0;
+
+        // Read backwards in chunks
+        while ($pos > 0 && $line_count < $lines) {
+            // Calculate how much to read
+            $read_size = min($buffer_size, $pos);
+            $pos -= $read_size;
+
+            // Read chunk
+            fseek($fp, $pos, SEEK_SET);
+            $chunk = fread($fp, $read_size);
+
+            // Prepend to buffer
+            $buffer = $chunk . $buffer;
+
+            // Count lines in buffer
+            $buffer_lines = explode("\n", $buffer);
+            $line_count = count($buffer_lines) - 1; // -1 because last element might be incomplete
+        }
+
+        fclose($fp);
+
+        // Split buffer into lines and get last N
+        $all_lines = explode("\n", $buffer);
+        $output = array_slice($all_lines, -$lines);
+
+        // Re-add newlines
+        $output = array_map(function($line) { return $line . "\n"; }, $output);
+
+        return $output;
     }
 
     /**

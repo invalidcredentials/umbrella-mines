@@ -204,37 +204,6 @@ if (file_exists($log_file)) {
         </div>
     </div>
 
-    <!-- Public Display Toggle -->
-    <div class="public-display-card">
-        <div class="public-display-header">
-            <div class="public-display-info">
-                <h3>🌐 PUBLIC DISPLAY</h3>
-                <p>Share your mining stats with the world at <strong><?php echo home_url('/umbrella-mines'); ?></strong></p>
-            </div>
-            <div class="public-display-toggle">
-                <label class="toggle-switch-small">
-                    <input type="checkbox" id="public-display-toggle" <?php echo (get_option('umbrella_public_display_enabled', '0') === '1') ? 'checked' : ''; ?>>
-                    <span class="toggle-slider-small"></span>
-                </label>
-                <span class="toggle-label-text"><?php echo (get_option('umbrella_public_display_enabled', '0') === '1') ? 'LIVE' : 'OFF'; ?></span>
-            </div>
-        </div>
-        <?php if (get_option('umbrella_public_display_enabled', '0') === '1'): ?>
-        <div class="public-display-options">
-            <div class="mine-name-input">
-                <label for="mine-name">Mine Name:</label>
-                <input type="text" id="mine-name" placeholder="Umbrella Mines" value="<?php echo esc_attr(get_option('umbrella_mine_name', 'Umbrella Mines')); ?>" maxlength="50">
-                <button id="save-mine-name" class="save-mine-name-btn">SAVE</button>
-            </div>
-        </div>
-        <div class="public-display-link">
-            <a href="<?php echo home_url('/umbrella-mines'); ?>" target="_blank" class="view-public-btn">
-                VIEW PUBLIC DISPLAY →
-            </a>
-        </div>
-        <?php endif; ?>
-    </div>
-
     <!-- Stats Grid -->
     <div class="stats-grid">
         <div class="stat-card">
@@ -419,6 +388,39 @@ No mining activity. Start mining to see live output.
         <div class="terminal-footer">
             Auto-refresh: <?php echo $is_mining ? 'ON (5s)' : 'OFF'; ?> | Showing last 100 lines
         </div>
+    </div>
+
+    <!-- Public Display Toggle -->
+    <div class="public-display-card experimental">
+        <div class="experimental-badge">! EXPERIMENTAL !</div>
+        <div class="public-display-header">
+            <div class="public-display-info">
+                <h3>🌐 PUBLIC DISPLAY</h3>
+                <p>Share your mining stats with the world at <strong><?php echo home_url('/umbrella-mines'); ?></strong></p>
+                <p class="experimental-warning">⚠️ May cause degraded performance and admin freezes but it's sick</p>
+            </div>
+            <div class="public-display-toggle">
+                <label class="toggle-switch-small">
+                    <input type="checkbox" id="public-display-toggle" <?php echo (get_option('umbrella_public_display_enabled', '0') === '1') ? 'checked' : ''; ?>>
+                    <span class="toggle-slider-small"></span>
+                </label>
+                <span class="toggle-label-text"><?php echo (get_option('umbrella_public_display_enabled', '0') === '1') ? 'LIVE' : 'OFF'; ?></span>
+            </div>
+        </div>
+        <?php if (get_option('umbrella_public_display_enabled', '0') === '1'): ?>
+        <div class="public-display-options">
+            <div class="mine-name-input">
+                <label for="mine-name">Mine Name:</label>
+                <input type="text" id="mine-name" placeholder="Umbrella Mines" value="<?php echo esc_attr(get_option('umbrella_mine_name', 'Umbrella Mines')); ?>" maxlength="50">
+                <button id="save-mine-name" class="save-mine-name-btn">SAVE</button>
+            </div>
+        </div>
+        <div class="public-display-link">
+            <a href="<?php echo home_url('/umbrella-mines'); ?>" target="_blank" class="view-public-btn">
+                VIEW PUBLIC DISPLAY →
+            </a>
+        </div>
+        <?php endif; ?>
     </div>
 
 </div>
@@ -628,16 +630,25 @@ jQuery(document).ready(function($) {
                         terminalRefreshInProgress = false;
                         lastRefreshTime = Date.now();
 
-                        if (response.success && response.data.output) {
-                            $('#mining-terminal').html(response.data.output);
-                            var terminal = document.getElementById('mining-terminal');
-                            if (terminal) {
-                                terminal.scrollTop = terminal.scrollHeight;
-                            }
+                        if (response.success) {
+                            // If skipped, don't update content (keep showing cached)
+                            if (response.data.skipped) {
+                                // Just update status, keep existing terminal content
+                                if (response.data.status) {
+                                    $('#terminal-status').text(response.data.status);
+                                }
+                            } else if (response.data.output) {
+                                // Normal update with new content
+                                $('#mining-terminal').html(response.data.output);
+                                var terminal = document.getElementById('mining-terminal');
+                                if (terminal) {
+                                    terminal.scrollTop = terminal.scrollHeight;
+                                }
 
-                            // Update status
-                            if (response.data.status) {
-                                $('#terminal-status').text(response.data.status);
+                                // Update status
+                                if (response.data.status) {
+                                    $('#terminal-status').text(response.data.status);
+                                }
                             }
                         }
                     } catch (e) {
@@ -835,6 +846,38 @@ jQuery(document).ready(function($) {
         padding: 20px 25px;
         margin-bottom: 30px;
         box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+        position: relative;
+    }
+
+    .public-display-card.experimental {
+        border-color: #ff9500;
+        box-shadow: 0 0 20px rgba(255, 149, 0, 0.3);
+    }
+
+    .experimental-badge {
+        position: absolute;
+        top: -12px;
+        right: 20px;
+        background: #ff9500;
+        color: #000;
+        padding: 4px 12px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 1px;
+        animation: pulse-orange 2s infinite;
+    }
+
+    .experimental-warning {
+        color: #ff9500;
+        font-size: 13px;
+        margin-top: 8px;
+        font-style: italic;
+    }
+
+    @keyframes pulse-orange {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
     }
 
     .public-display-header {

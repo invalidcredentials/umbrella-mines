@@ -1,101 +1,9 @@
-<?php
-/**
- * Public Mining Display Page
- * URL: yoursite.com/umbrella-mines
- */
-
-if (!defined('ABSPATH')) {
-    exit;
-}
-
-global $wpdb;
-
-// Get real mining stats
-$stats = array(
-    'total_wallets' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}umbrella_mining_wallets"),
-    'total_solutions' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}umbrella_mining_solutions"),
-    'total_receipts' => $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}umbrella_mining_receipts"),
-);
-
-// Get current challenge
-$current_challenge = $wpdb->get_row("
-    SELECT * FROM {$wpdb->prefix}umbrella_mining_challenges
-    ORDER BY fetched_at DESC
-    LIMIT 1
-");
-
-// Fetch NIGHT rates from database (same logic as dashboard)
-$night_rates_cache = array();
-$db_rates = $wpdb->get_results("
-    SELECT day, star_per_receipt
-    FROM {$wpdb->prefix}umbrella_night_rates
-    ORDER BY day ASC
-");
-
-if (!empty($db_rates)) {
-    // Use database rates
-    foreach ($db_rates as $rate) {
-        $night_rates_cache[(int)$rate->day - 1] = (int)$rate->star_per_receipt;
-    }
-}
-
-// Calculate total NIGHT earned - join receipts with their actual challenge days
-$total_star = 0;
-$night_calculation = $wpdb->get_results("
-    SELECT c.day, COUNT(r.id) as receipt_count, n.star_per_receipt
-    FROM {$wpdb->prefix}umbrella_mining_receipts r
-    INNER JOIN {$wpdb->prefix}umbrella_mining_solutions s ON r.solution_id = s.id
-    INNER JOIN {$wpdb->prefix}umbrella_mining_challenges c ON s.challenge_id = c.challenge_id
-    INNER JOIN {$wpdb->prefix}umbrella_night_rates n ON c.day = n.day
-    GROUP BY c.day, n.star_per_receipt
-");
-
-foreach ($night_calculation as $row) {
-    $total_star += (int)$row->receipt_count * (int)$row->star_per_receipt;
-}
-$total_night = $total_star / 1000000;
-
-// Check if mining is currently running
-$log_file = WP_CONTENT_DIR . '/umbrella-mines-output.log';
-$is_mining = false;
-$mining_output = '';
-
-if (file_exists($log_file) && filesize($log_file) > 0) {
-    // Get last 50 lines efficiently using the Umbrella_Mines method
-    $plugin = Umbrella_Mines::instance();
-    $lines = $plugin->read_last_lines($log_file, 50);
-
-    if (!empty($lines)) {
-        $mining_output = implode('', $lines);
-
-        // Check if mining is active by looking for stop signal in last 50 lines
-        $recent_content = implode('', $lines);
-
-        // If we see the stop signal, mining is NOT active
-        if (strpos($recent_content, 'Stop signal received. Mining stopped gracefully') !== false) {
-            $is_mining = false;
-        } else {
-            // Otherwise check if file was recently modified (active mining)
-            $last_modified = filemtime($log_file);
-            $is_mining = (time() - $last_modified) < 60;
-        }
-    }
-}
-
-// Get site name and custom mine name
-$site_name = get_bloginfo('name');
-$mine_name = get_option('umbrella_mine_name', 'Umbrella Mines');
-if (empty($mine_name)) {
-    $mine_name = 'Umbrella Mines';
-}
-
-?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo esc_html($site_name); ?> - <?php echo esc_html($mine_name); ?></title>
+    <title>Umbrella Mines - Retro Mining Animation Test</title>
     <style>
         body {
             margin: 0;
@@ -144,13 +52,6 @@ if (empty($mine_name)) {
                 0 0 20px #00d4ff;
         }
 
-        .site-name {
-            font-size: 14px;
-            color: #666;
-            letter-spacing: 2px;
-            margin-top: 5px;
-        }
-
         .umbrella-float {
             font-size: 42px;
             display: inline-block;
@@ -161,6 +62,16 @@ if (empty($mine_name)) {
                 0 0 30px #00ff41;
             animation: float 3s ease-in-out infinite;
             margin: 0 15px;
+        }
+
+        .snake-icon {
+            display: inline-block;
+            width: 42px;
+            height: 42px;
+            vertical-align: middle;
+            margin: 0 15px;
+            animation: float 3s ease-in-out infinite;
+            filter: drop-shadow(0 0 10px #ff3333) drop-shadow(0 0 20px #ff3333);
         }
 
         @keyframes flicker {
@@ -180,12 +91,27 @@ if (empty($mine_name)) {
             }
         }
 
+        @keyframes flicker-viper {
+            0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+                text-shadow:
+                    0 0 10px #ff3333,
+                    0 0 20px #ff3333,
+                    0 0 30px #ff3333,
+                    0 0 40px #ff3333,
+                    0 0 70px #ff3333,
+                    0 0 80px #ff3333;
+            }
+            20%, 24%, 55% {
+                text-shadow:
+                    0 0 5px #ff3333,
+                    0 0 10px #ff3333;
+            }
+        }
 
         @keyframes float {
             0%, 100% { transform: translateY(0px) rotate(5deg); }
             50% { transform: translateY(-10px) rotate(-5deg); }
         }
-
 
         /* Page-wide firework particles */
         .page-firework {
@@ -460,29 +386,14 @@ if (empty($mine_name)) {
             height: 100%;
             padding: 15px;
             color: #00ff41;
-            font-size: 12px;
-            line-height: 1.5;
+            font-size: 13px;
+            line-height: 1.6;
             overflow-y: auto;
             font-family: 'Courier New', monospace;
-            white-space: pre;
-            overflow-x: auto;
-            text-align: left;
         }
 
         .terminal-output::-webkit-scrollbar {
             width: 8px;
-        }
-
-        .solution-highlight {
-            color: #ffff00;
-            font-weight: bold;
-            text-shadow: 0 0 10px #ffff00, 0 0 20px #ffff00;
-            animation: pulse-glow 1s infinite;
-        }
-
-        @keyframes pulse-glow {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
         }
 
         .terminal-output::-webkit-scrollbar-track {
@@ -525,56 +436,246 @@ if (empty($mine_name)) {
             text-align: center;
         }
 
+        /* Toggle Switch Container */
+        .toggle-container {
+            margin-top: 30px;
+            text-align: center;
+            padding: 20px;
+            background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
+            border: 3px solid #00ff41;
+            border-radius: 12px;
+            max-width: 400px;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+        }
+
+        .toggle-label {
+            color: #00ff41;
+            font-size: 14px;
+            letter-spacing: 2px;
+            margin-bottom: 15px;
+            text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+        }
+
+        /* Old School Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 200px;
+            height: 80px;
+            background: linear-gradient(145deg, #2a2a2a 0%, #1a1a1a 100%);
+            border: 4px solid #444;
+            border-radius: 12px;
+            box-shadow:
+                inset 0 2px 5px rgba(0, 0, 0, 0.5),
+                0 0 10px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            overflow: hidden;
+        }
+
+        .toggle-switch::before {
+            content: 'UMBRELLA';
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #00ff41;
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            text-shadow: 0 0 8px #00ff41;
+            transition: all 0.3s;
+        }
+
+        .toggle-switch::after {
+            content: 'VIPER';
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #666;
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            transition: all 0.3s;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            width: 80px;
+            height: 60px;
+            background: linear-gradient(145deg, #00ff41 0%, #00cc33 100%);
+            border: 3px solid #00ff41;
+            border-radius: 8px;
+            transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            box-shadow:
+                0 4px 8px rgba(0, 0, 0, 0.4),
+                inset 0 1px 3px rgba(255, 255, 255, 0.3),
+                0 0 15px rgba(0, 255, 65, 0.6);
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50px;
+            height: 40px;
+            background: linear-gradient(145deg, #00aa2a 0%, #008822 100%);
+            border-radius: 4px;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Viper Mode Active */
+        body.viper-mode .toggle-switch::before {
+            color: #666;
+            text-shadow: none;
+        }
+
+        body.viper-mode .toggle-switch::after {
+            color: #ff3333;
+            text-shadow: 0 0 8px #ff3333;
+        }
+
+        body.viper-mode .toggle-slider {
+            left: 108px;
+            background: linear-gradient(145deg, #ff3333 0%, #cc0000 100%);
+            border-color: #ff3333;
+            box-shadow:
+                0 4px 8px rgba(0, 0, 0, 0.4),
+                inset 0 1px 3px rgba(255, 255, 255, 0.3),
+                0 0 15px rgba(255, 51, 51, 0.6);
+        }
+
+        body.viper-mode .toggle-slider::before {
+            background: linear-gradient(145deg, #aa0000 0%, #880000 100%);
+        }
+
+        /* Viper Mode Theme Overrides */
+        body.viper-mode {
+            background: linear-gradient(180deg, #2a0a0a 0%, #1a0a00 50%, #2a0a0a 100%);
+        }
+
+        body.viper-mode .neon-title h1 {
+            color: #ff3333;
+            animation: flicker-viper 3s infinite alternate;
+        }
+
+        body.viper-mode .subtitle {
+            color: #ffaa00;
+            text-shadow:
+                0 0 5px #ffaa00,
+                0 0 10px #ffaa00,
+                0 0 15px #ffaa00,
+                0 0 20px #ffaa00;
+        }
+
+        body.viper-mode .umbrella-float {
+            font-family: monospace;
+            font-weight: bold;
+            color: #ff3333;
+            text-shadow:
+                0 0 10px #ff3333,
+                0 0 20px #ff3333,
+                0 0 30px #ff3333;
+        }
+
+        body.viper-mode .crt-monitor {
+            border-color: #ff3333;
+            box-shadow:
+                0 0 30px rgba(255, 51, 51, 0.5),
+                0 0 60px rgba(255, 51, 51, 0.3),
+                inset 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        body.viper-mode .screen {
+            border-color: #ff3333;
+        }
+
+        body.viper-mode .monitor-header,
+        body.viper-mode .status-bar {
+            color: #ff3333;
+            border-color: #ff3333;
+            background: rgba(255, 51, 51, 0.1);
+            text-shadow: 0 0 10px rgba(255, 51, 51, 0.5);
+        }
+
+        body.viper-mode .terminal-output {
+            color: #ff3333;
+        }
+
+        body.viper-mode .hash-rate {
+            color: #ffaa00;
+        }
+
+        body.viper-mode .solution-found {
+            color: #ffff00;
+        }
+
+        body.viper-mode .toggle-container {
+            border-color: #ff3333;
+            box-shadow: 0 0 20px rgba(255, 51, 51, 0.3);
+        }
+
+        body.viper-mode .toggle-label {
+            color: #ff3333;
+            text-shadow: 0 0 10px rgba(255, 51, 51, 0.5);
+        }
+
+        @keyframes pulse-glow-viper {
+            0% { box-shadow: 0 0 30px rgba(255, 51, 51, 0.5), 0 0 60px rgba(255, 51, 51, 0.3), inset 0 0 20px rgba(0, 0, 0, 0.5); }
+            100% { box-shadow: 0 0 40px rgba(255, 51, 51, 0.7), 0 0 80px rgba(255, 51, 51, 0.4), inset 0 0 20px rgba(0, 0, 0, 0.5); }
+        }
+
+        body.viper-mode .crt-monitor {
+            animation: pulse-glow-viper 2s ease-in-out infinite alternate;
+        }
     </style>
 </head>
 <body>
     <!-- Neon Title Header -->
     <div class="neon-title">
         <h1>
-            <span class="umbrella-float">☂</span>
-            <?php echo strtoupper(esc_html($mine_name)); ?>
-            <span class="umbrella-float">☂</span>
+            <span class="umbrella-float" id="icon-left">☂</span>
+            <canvas id="snake-left" class="snake-icon" width="42" height="42" style="display:none;"></canvas>
+            <span id="title-text">UMBRELLA MINES</span>
+            <span class="umbrella-float" id="icon-right">☂</span>
+            <canvas id="snake-right" class="snake-icon" width="42" height="42" style="display:none;"></canvas>
         </h1>
-        <p class="subtitle">NIGHT MINER</p>
-        <p class="site-name"><?php echo esc_html($site_name); ?></p>
+        <p class="subtitle" id="subtitle-text">NIGHT MINER</p>
     </div>
 
     <div class="mining-container">
         <!-- Animation Monitor -->
         <div class="crt-monitor">
-            <div class="monitor-header">MINING STATS</div>
+            <div class="monitor-header">MINING ANIMATION</div>
             <div class="screen">
                 <canvas id="animation-canvas"></canvas>
             </div>
-            <div class="status-bar">PICKAXE MINING <?php echo $is_mining ? 'ACTIVE' : 'PAUSED'; ?></div>
+            <div class="status-bar">PICKAXE MINING ACTIVE</div>
         </div>
 
         <!-- Terminal Monitor -->
         <div class="crt-monitor">
             <div class="monitor-header">LIVE MINING STREAM</div>
             <div class="screen">
-                <div class="terminal-output" id="terminal"><?php if (!empty($mining_output)): ?><?php
-                    // Highlight solution text
-                    $highlighted = str_replace('✨ SOLUTION FOUND!', '<span class="solution-highlight">✨ SOLUTION FOUND!</span>', esc_html($mining_output));
-                    echo $highlighted;
-                ?><?php else: ?>
-                        <div class="terminal-line">No mining activity yet...</div>
-                        <div class="terminal-line">Waiting for miner to start...</div><?php endif; ?></div>
+                <div class="terminal-output" id="terminal"></div>
             </div>
-            <div class="status-bar" id="status"><?php echo $is_mining ? 'MINING ACTIVE' : 'IDLE'; ?></div>
+            <div class="status-bar" id="status">INITIALIZING MINER...</div>
         </div>
     </div>
 
+    <!-- Toggle Switch -->
+    <div class="toggle-container">
+        <div class="toggle-label">MODE SELECT</div>
+        <div class="toggle-switch" id="mode-toggle">
+            <div class="toggle-slider"></div>
+        </div>
+    </div>
 
     <script>
-        // Real stats from WordPress
-        const REAL_STATS = {
-            wallets: <?php echo (int)$stats['total_wallets']; ?>,
-            solutions: <?php echo (int)$stats['total_solutions']; ?>,
-            nightEarned: <?php echo number_format($total_night, 6, '.', ''); ?>,
-            isMining: <?php echo $is_mining ? 'true' : 'false'; ?>
-        };
-
         // Pixel Art Mining Animation
         const canvas = document.getElementById('animation-canvas');
         const ctx = canvas.getContext('2d');
@@ -600,8 +701,70 @@ if (empty($mine_name)) {
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
 
-        // No Viper Mode on public display - always Umbrella theme
-        const isViperMode = false;
+        // Draw pixel snake icon
+        function drawPixelSnake(canvasId) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, 42, 42);
+
+            // Pixel snake (like old school snake game)
+            ctx.fillStyle = '#ff3333';
+
+            // Snake body segments (S-curve)
+            // Head (top)
+            ctx.fillRect(18, 6, 6, 6);
+            // Tongue
+            ctx.fillRect(21, 3, 2, 3);
+            ctx.fillRect(19, 3, 2, 3);
+
+            // Body segments
+            ctx.fillRect(18, 12, 6, 6);
+            ctx.fillRect(12, 12, 6, 6);
+            ctx.fillRect(12, 18, 6, 6);
+            ctx.fillRect(18, 18, 6, 6);
+            ctx.fillRect(24, 18, 6, 6);
+            ctx.fillRect(24, 24, 6, 6);
+            ctx.fillRect(18, 24, 6, 6);
+            ctx.fillRect(18, 30, 6, 6);
+
+            // Eyes
+            ctx.fillStyle = '#000';
+            ctx.fillRect(19, 7, 2, 2);
+            ctx.fillRect(23, 7, 2, 2);
+        }
+
+        // Mode Toggle Handler
+        let isViperMode = false;
+
+        document.getElementById('mode-toggle').addEventListener('click', function() {
+            isViperMode = !isViperMode;
+
+            if (isViperMode) {
+                // Switch to Viper Mode
+                document.body.classList.add('viper-mode');
+                document.getElementById('title-text').textContent = 'VIPER MINES';
+                document.getElementById('subtitle-text').textContent = 'VENOM PROTOCOL';
+
+                // Show snake icons
+                document.getElementById('icon-left').style.display = 'none';
+                document.getElementById('icon-right').style.display = 'none';
+                document.getElementById('snake-left').style.display = 'inline-block';
+                document.getElementById('snake-right').style.display = 'inline-block';
+                drawPixelSnake('snake-left');
+                drawPixelSnake('snake-right');
+            } else {
+                // Switch to Umbrella Mode
+                document.body.classList.remove('viper-mode');
+                document.getElementById('title-text').textContent = 'UMBRELLA MINES';
+                document.getElementById('subtitle-text').textContent = 'NIGHT MINER';
+
+                // Show umbrella icons
+                document.getElementById('icon-left').style.display = 'inline-block';
+                document.getElementById('icon-right').style.display = 'inline-block';
+                document.getElementById('snake-left').style.display = 'none';
+                document.getElementById('snake-right').style.display = 'none';
+            }
+        });
 
         // Animation state
         let frame = 0;
@@ -610,7 +773,7 @@ if (empty($mine_name)) {
         let swingProgress = 0;
         let particles = [];
         let totalSwings = 0;
-        let swingsSinceSolution = 0;
+        let swingsSinceBlock = 0;
         let swingsSinceGlitch = 0;
         let nextGlitchAt = Math.floor(Math.random() * 40) + 80; // Random between 80-120 swings
 
@@ -800,19 +963,19 @@ if (empty($mine_name)) {
             const isHit = swingProgress > 0.7 && swingProgress < 0.8;
             drawFloppyDisk(diskX, diskY, isHit);
 
-            // Swing animation - only if mining is active
-            if (!isSwinging && REAL_STATS.isMining) {
+            // Swing animation
+            if (!isSwinging) {
                 // Start new swing every 60 frames
                 if (frame % 60 === 0) {
                     isSwinging = true;
                     swingProgress = 0;
                 }
-            } else if (isSwinging) {
+            } else {
                 swingProgress += 0.05;
 
                 // Create particles when hitting
                 if (swingProgress > 0.7 && swingProgress < 0.75) {
-                    swingsSinceSolution++;
+                    swingsSinceBlock++;
                     totalSwings++;
                     swingsSinceGlitch++;
 
@@ -828,12 +991,17 @@ if (empty($mine_name)) {
                         nextGlitchAt = Math.floor(Math.random() * 40) + 80; // Next glitch in 80-120 swings
                     }
 
-                    // 5% chance for NICE block hit (extra particles)
+                    // 5% chance for NICE block hit
                     const isNiceBlock = Math.random() < 0.05;
                     const particleCount = isNiceBlock ? 69 : 5;
 
                     for (let i = 0; i < particleCount; i++) {
                         particles.push(new Particle(diskX, diskY - 40));
+                    }
+
+                    // Reset swings counter on nice block
+                    if (isNiceBlock) {
+                        swingsSinceBlock = 0;
                     }
                 }
 
@@ -892,24 +1060,24 @@ if (empty($mine_name)) {
 
             ctx.font = '11px monospace';
             ctx.fillText(`Total Swings: ${totalSwings.toLocaleString()}`, 20, 50);
-            ctx.fillText(`Swings Since Solution: ${swingsSinceSolution}`, 20, 70);
+            ctx.fillText(`Swings Until Block: ${swingsSinceBlock}`, 20, 70);
             ctx.fillText(`Particles: ${particles.length}`, 20, 90);
 
-            // Real stats from WordPress
+            // Mock stats (will be real data later)
             ctx.fillStyle = secondaryColor;
-            ctx.fillText(`Wallets: ${REAL_STATS.wallets}`, 20, 115);
-            ctx.fillText(`Solutions: ${REAL_STATS.solutions}`, 20, 135);
-            ctx.fillText(`NIGHT Earned: ${REAL_STATS.nightEarned}`, 20, 155);
+            ctx.fillText(`Wallets: 42`, 20, 115);
+            ctx.fillText(`Solutions: 13`, 20, 135);
+            ctx.fillText(`NIGHT Earned: 0.420000`, 20, 155);
 
             frame++;
             requestAnimationFrame(animate);
         }
 
-        // Terminal simulation with real solutions
+        // Terminal simulation
         const terminal = document.getElementById('terminal');
         const statusBar = document.getElementById('status');
         let hashCount = 0;
-        let solutionCount = REAL_STATS.solutions;
+        let solutionCount = 0;
 
         function addTerminalLine(text, className = '') {
             const line = document.createElement('div');
@@ -925,20 +1093,18 @@ if (empty($mine_name)) {
         }
 
         function simulateMining() {
-            // Random hash updates (only if mining is active)
+            // Random hash updates
             setInterval(() => {
-                if (REAL_STATS.isMining) {
-                    hashCount += Math.floor(Math.random() * 100) + 50;
-                    const hashRate = Math.floor(Math.random() * 200) + 800;
-                    addTerminalLine(`[${new Date().toLocaleTimeString()}] Hashes: ${hashCount.toLocaleString()} | Rate: ${hashRate} H/s`, 'hash-rate');
+                hashCount += Math.floor(Math.random() * 100) + 50;
+                const hashRate = Math.floor(Math.random() * 200) + 800;
+                addTerminalLine(`[${new Date().toLocaleTimeString()}] Hashes: ${hashCount.toLocaleString()} | Rate: ${hashRate} H/s`, 'hash-rate');
 
-                    statusBar.textContent = `MINING ACTIVE | ${hashRate} H/s | ${solutionCount} SOLUTIONS`;
-                }
+                statusBar.textContent = `MINING ACTIVE | ${hashRate} H/s | ${solutionCount} SOLUTIONS`;
             }, 2000);
 
-            // Random solution found (only if mining is active)
+            // Random solution found
             setInterval(() => {
-                if (REAL_STATS.isMining && Math.random() > 0.7) {
+                if (Math.random() > 0.7) {
                     solutionCount++;
                     const nonce = Math.floor(Math.random() * 999999);
                     addTerminalLine(`>>> SOLUTION FOUND! Nonce: ${nonce} <<<`, 'solution-found');
@@ -962,27 +1128,9 @@ if (empty($mine_name)) {
                     fireworks.push(new Firework(centerX, centerY));
                 }
 
-                // ALWAYS trigger page-wide fireworks! Finding a solution is rare and special!
-                triggerPageFireworks();
-
-                // Random chance for MEGA celebration
-                const celebrationType = Math.random();
-                if (celebrationType < 0.33) {
-                    // Triple burst!
-                    setTimeout(() => triggerPageFireworks(), 500);
-                    setTimeout(() => triggerPageFireworks(), 1000);
-                } else if (celebrationType < 0.66) {
-                    // Sustained fireworks
-                    setTimeout(() => triggerPageFireworks(), 300);
-                    setTimeout(() => triggerPageFireworks(), 600);
-                    setTimeout(() => triggerPageFireworks(), 900);
-                } else {
-                    // MASSIVE single burst
-                    setTimeout(() => {
-                        for (let i = 0; i < 3; i++) {
-                            triggerPageFireworks();
-                        }
-                    }, 400);
+                // 30% chance to also trigger page-wide fireworks!
+                if (Math.random() < 0.3) {
+                    triggerPageFireworks();
                 }
             }
 
@@ -1033,93 +1181,30 @@ if (empty($mine_name)) {
                 }
             }
 
-            // Initial messages (only if mining is active)
-            if (REAL_STATS.isMining) {
-                addTerminalLine('=================================');
-                addTerminalLine('UMBRELLA MINES MINER v0.3.1');
-                addTerminalLine('=================================');
-                addTerminalLine('Initializing AshMaize FFI...');
-                setTimeout(() => {
-                    addTerminalLine('Generating ephemeral wallet...');
-                    statusBar.textContent = 'GENERATING WALLET...';
-                }, 500);
-                setTimeout(() => {
-                    addTerminalLine('Wallet created: addr1qx...');
-                    addTerminalLine('Fetching current challenge...');
-                    statusBar.textContent = 'FETCHING CHALLENGE...';
-                }, 1000);
-                setTimeout(() => {
-                    addTerminalLine('Challenge: 00000abc... | Difficulty: 20');
-                    addTerminalLine('Starting mining...');
-                    statusBar.textContent = 'MINING ACTIVE | 0 H/s | 0 SOLUTIONS';
-                }, 1500);
-            }
+            // Initial messages
+            addTerminalLine('=================================');
+            addTerminalLine('UMBRELLA MINES MINER v0.3.1');
+            addTerminalLine('=================================');
+            addTerminalLine('Initializing AshMaize FFI...');
+            setTimeout(() => {
+                addTerminalLine('Generating ephemeral wallet...');
+                statusBar.textContent = 'GENERATING WALLET...';
+            }, 500);
+            setTimeout(() => {
+                addTerminalLine('Wallet created: addr1qx...');
+                addTerminalLine('Fetching current challenge...');
+                statusBar.textContent = 'FETCHING CHALLENGE...';
+            }, 1000);
+            setTimeout(() => {
+                addTerminalLine('Challenge: 00000abc... | Difficulty: 20');
+                addTerminalLine('Starting mining...');
+                statusBar.textContent = 'MINING ACTIVE | 0 H/s | 0 SOLUTIONS';
+            }, 1500);
         }
 
         // Start animations
         animate();
-        // Don't simulate - using real terminal output from PHP
-
-        // Check for solution in current content on load
-        <?php if ($is_mining): ?>
-        let lastTerminalContent = '';
-        try {
-            const terminalElement = document.getElementById('terminal');
-            if (terminalElement) {
-                lastTerminalContent = terminalElement.textContent;
-
-                // Check immediately if there's already a solution visible
-                if (lastTerminalContent.includes('✨ SOLUTION FOUND!')) {
-                    console.log('🎉 SOLUTION ALREADY ON SCREEN! Triggering celebration!');
-                    triggerFireworks();
-                }
-            }
-        } catch (e) {
-            console.log('Error checking initial solution:', e);
-        }
-
-        // Auto-refresh terminal if mining is active (every 2 seconds for faster detection)
-        setInterval(function() {
-            try {
-                // Fetch latest terminal output
-                fetch(window.location.href)
-                    .then(response => response.text())
-                    .then(html => {
-                        try {
-                            const parser = new DOMParser();
-                            const doc = parser.parseFromString(html, 'text/html');
-                            const newTerminal = doc.querySelector('#terminal');
-                            const terminal = document.getElementById('terminal');
-
-                            if (newTerminal && terminal) {
-                                const newContent = newTerminal.textContent;
-
-                                // Check if a solution was just found!
-                                if (newContent.includes('✨ SOLUTION FOUND!') && !lastTerminalContent.includes('✨ SOLUTION FOUND!')) {
-                                    console.log('🎉 SOLUTION DETECTED! Triggering celebration!');
-                                    try {
-                                        triggerFireworks();
-                                        // Also reset the swings counter
-                                        swingsSinceSolution = 0;
-                                    } catch (e) {
-                                        console.log('Error triggering fireworks:', e);
-                                    }
-                                }
-
-                                terminal.innerHTML = newTerminal.innerHTML;
-                                terminal.scrollTop = terminal.scrollHeight;
-                                lastTerminalContent = newContent;
-                            }
-                        } catch (e) {
-                            console.log('Error parsing terminal update:', e);
-                        }
-                    })
-                    .catch(err => console.log('Error fetching terminal:', err));
-            } catch (e) {
-                console.log('Error in terminal refresh interval:', e);
-            }
-        }, 2000); // Check every 2 seconds instead of 5
-        <?php endif; ?>
+        simulateMining();
     </script>
 </body>
 </html>
