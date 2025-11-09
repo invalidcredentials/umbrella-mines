@@ -502,6 +502,58 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         margin-top: 25px;
         letter-spacing: 1px;
     }
+
+    .coming-soon-close {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        background: rgba(255, 51, 102, 0.2);
+        border: 2px solid #ff3366;
+        color: #ff3366;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 24px;
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s ease;
+    }
+
+    .coming-soon-close:hover {
+        background: rgba(255, 51, 102, 0.3);
+        transform: rotate(90deg);
+    }
+
+    .coming-soon-buttons {
+        display: flex;
+        gap: 15px;
+        justify-content: center;
+        margin-top: 30px;
+    }
+
+    .coming-soon-btn {
+        background: rgba(0, 255, 65, 0.1);
+        border: 2px solid #00ff41;
+        color: #00ff41;
+        padding: 12px 30px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        text-decoration: none;
+        transition: all 0.3s ease;
+        display: inline-block;
+    }
+
+    .coming-soon-btn:hover {
+        background: rgba(0, 255, 65, 0.2);
+        box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
+        color: #00ff41;
+        text-decoration: none;
+    }
     </style>
 
     <script>
@@ -747,8 +799,10 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
     <?php endif; ?>
 
     <!-- Coming Soon Overlay -->
-    <div class="coming-soon-overlay">
-        <div class="coming-soon-content">
+    <div class="coming-soon-overlay" id="coming-soon-overlay">
+        <div class="coming-soon-content" style="position: relative;">
+            <div class="coming-soon-close" onclick="document.getElementById('coming-soon-overlay').style.display='none'">×</div>
+
             <div class="coming-soon-badge">Coming Soon</div>
 
             <div class="coming-soon-icon">🔀</div>
@@ -770,6 +824,15 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
 
             <div class="coming-soon-tagline">
                 Umbrella Mines: We've Got You Covered ☂️
+            </div>
+
+            <div class="coming-soon-buttons">
+                <a href="<?php echo admin_url('admin.php?page=umbrella-mines'); ?>" class="coming-soon-btn">
+                    ← Back to Dashboard
+                </a>
+                <button onclick="document.getElementById('coming-soon-overlay').style.display='none'" class="coming-soon-btn">
+                    View Page Anyway
+                </button>
             </div>
         </div>
     </div>
