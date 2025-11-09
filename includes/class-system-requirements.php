@@ -74,11 +74,26 @@ class Umbrella_Mines_System_Requirements {
      * Check if PHP CLI is available
      */
     private static function check_php_cli() {
-        // PASSIVE CHECK - just use PHP_BINARY constant
-        $php_cli = defined('PHP_BINARY') ? PHP_BINARY : null;
+        // Check common PHP CLI paths on Linux/Unix
+        $possible_paths = array(
+            '/usr/bin/php',
+            '/usr/bin/php8.3',
+            '/usr/bin/php8.2',
+            '/usr/bin/php8.1',
+            '/usr/bin/php8.0',
+            '/usr/local/bin/php',
+            defined('PHP_BINARY') ? PHP_BINARY : null,
+        );
 
-        // Basic validation - don't try to execute anything
-        $passed = !empty($php_cli) && @file_exists($php_cli);
+        $php_cli = null;
+        foreach ($possible_paths as $path) {
+            if (!empty($path) && @file_exists($path)) {
+                $php_cli = $path;
+                break;
+            }
+        }
+
+        $passed = !empty($php_cli);
 
         return array(
             'name' => 'PHP CLI',
