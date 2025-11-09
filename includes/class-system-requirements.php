@@ -49,35 +49,34 @@ class Umbrella_Mines_System_Requirements {
     }
 
     /**
-     * Check PHP version (exactly 8.3.17 required for Rust FFI compatibility)
+     * Check PHP version (8.3.x required for Rust FFI compatibility)
      */
     private static function check_php_version() {
         $version = PHP_VERSION;
-        $required = '8.3.17';
+        $required = '8.3.0';
 
-        // Extract major.minor.patch from version string
+        // Extract major.minor from version string
         $current_parts = explode('.', $version);
         $required_parts = explode('.', $required);
 
-        // Check if exact match on major.minor.patch
-        $exact_match = (
-            isset($current_parts[0], $current_parts[1], $current_parts[2]) &&
+        // Check if major.minor match (accept any 8.3.x patch version)
+        $version_match = (
+            isset($current_parts[0], $current_parts[1]) &&
             $current_parts[0] == $required_parts[0] &&
-            $current_parts[1] == $required_parts[1] &&
-            $current_parts[2] == $required_parts[2]
+            $current_parts[1] == $required_parts[1]
         );
 
-        $passed = $exact_match;
+        $passed = $version_match;
 
         return array(
             'name' => 'PHP Version',
-            'required' => $required,
+            'required' => '8.3.x',
             'current' => $version,
             'passed' => $passed,
             'critical' => true,
             'message' => $passed
-                ? "PHP {$version} - Exact match required for Rust FFI"
-                : "PHP {$version} detected. Requires exactly PHP {$required} for Rust FFI compatibility. Install from: https://www.php.net/downloads",
+                ? "PHP {$version} - Compatible with 8.3.x"
+                : "PHP {$version} detected. Requires PHP 8.3.x for Rust FFI compatibility. Install from: https://www.php.net/downloads",
         );
     }
 

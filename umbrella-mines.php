@@ -3,12 +3,12 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.3.3
+ * Version: 0.3.4
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
  * Requires at least: 5.0
- * Requires PHP: 8.3.17
+ * Requires PHP: 8.3
  * Text Domain: umbrella-mines
  */
 
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('UMBRELLA_MINES_VERSION', '0.3.3');
+define('UMBRELLA_MINES_VERSION', '0.3.4');
 define('UMBRELLA_MINES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('UMBRELLA_MINES_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('UMBRELLA_MINES_DATA_DIR', WP_CONTENT_DIR . '/uploads/umbrella-mines');
@@ -43,6 +43,7 @@ class Umbrella_Mines {
 
         // Handle Start/Stop mining actions EARLY
         add_action('admin_init', array($this, 'handle_mining_actions'));
+        add_action('admin_init', array($this, 'handle_payout_wallet_actions'));
 
         // Admin hooks
         add_action('admin_menu', array($this, 'add_admin_menu'));
@@ -66,6 +67,12 @@ class Umbrella_Mines {
         add_action('wp_ajax_umbrella_send_stop_signal', array($this, 'ajax_send_stop_signal'));
         add_action('wp_ajax_umbrella_check_export_allowed', array($this, 'ajax_check_export_allowed'));
         add_action('wp_ajax_umbrella_export_all_data', array($this, 'ajax_export_all_data'));
+
+        // Merge/Payout wallet AJAX hooks
+        add_action('wp_ajax_umbrella_export_payout_mnemonic', array($this, 'ajax_export_payout_mnemonic'));
+        add_action('wp_ajax_umbrella_delete_payout_wallet', array($this, 'ajax_delete_payout_wallet'));
+        add_action('wp_ajax_umbrella_merge_all_wallets', array($this, 'ajax_merge_all_wallets'));
+        add_action('wp_ajax_umbrella_merge_single_wallet', array($this, 'ajax_merge_single_wallet'));
 
         // Public display hooks
         add_action('init', array($this, 'register_public_display_rewrite'));
@@ -235,6 +242,43 @@ class Umbrella_Mines {
             PRIMARY KEY (day)
         ) $charset_collate;";
 
+        // Table 10: Payout wallet (custodial wallet for merging rewards)
+        $table_payout_wallet = $wpdb->prefix . 'umbrella_mining_payout_wallet';
+        $sql_payout_wallet = "CREATE TABLE {$table_payout_wallet} (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            wallet_name varchar(255) NOT NULL,
+            address varchar(255) NOT NULL,
+            mnemonic_encrypted text NOT NULL,
+            payment_skey_extended_encrypted text NOT NULL,
+            payment_pkey varchar(64) NOT NULL,
+            payment_keyhash varchar(56) NOT NULL,
+            network varchar(20) DEFAULT 'mainnet',
+            is_active tinyint(1) DEFAULT 1,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY address (address)
+        ) $charset_collate;";
+
+        // Table 11: Merge operations (donate_to API tracking)
+        $table_merges = $wpdb->prefix . 'umbrella_mining_merges';
+        $sql_merges = "CREATE TABLE {$table_merges} (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            original_address varchar(255) NOT NULL,
+            payout_address varchar(255) NOT NULL,
+            original_wallet_id bigint(20) NOT NULL,
+            merge_signature text NOT NULL,
+            merge_receipt longtext,
+            solutions_consolidated int DEFAULT 0,
+            status enum('pending','processing','success','failed') DEFAULT 'pending',
+            error_message text,
+            merged_at datetime DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_original (original_address),
+            KEY idx_payout (payout_address),
+            KEY idx_status (status),
+            KEY idx_wallet (original_wallet_id)
+        ) $charset_collate;";
+
         // Create tables
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql_wallets);
@@ -246,6 +290,8 @@ class Umbrella_Mines {
         dbDelta($sql_progress);
         dbDelta($sql_processes);
         dbDelta($sql_night_rates);
+        dbDelta($sql_payout_wallet);
+        dbDelta($sql_merges);
 
         // Set default config
         $this->set_default_config();
@@ -430,6 +476,15 @@ class Umbrella_Mines {
 
         add_submenu_page(
             'umbrella-mines',
+            'Merge Addresses',
+            'Merge Addresses',
+            'manage_options',
+            'umbrella-mines-merge-addresses',
+            array($this, 'admin_merge_addresses')
+        );
+
+        add_submenu_page(
+            'umbrella-mines',
             'Create Table',
             'Create Table',
             'manage_options',
@@ -471,6 +526,90 @@ class Umbrella_Mines {
      */
     public function admin_create_table() {
         require_once UMBRELLA_MINES_PLUGIN_DIR . 'admin/create-table.php';
+    }
+
+    /**
+     * Handle payout wallet form submissions (runs on admin_init BEFORE any output)
+     */
+    public function handle_payout_wallet_actions() {
+        if (!isset($_POST['payout_action'])) {
+            return;
+        }
+
+        if (!check_admin_referer('umbrella_payout_wallet', 'payout_wallet_nonce')) {
+            return;
+        }
+
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/CardanoWalletPHP.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-payout-wallet.php';
+
+        $action = sanitize_text_field($_POST['payout_action']);
+
+        if ($action === 'generate') {
+            error_log('=== UMBRELLA MINES PAYOUT WALLET GENERATION START ===');
+
+            $wallet_name = sanitize_text_field($_POST['wallet_name']);
+            $network = get_option('umbrella_mines_network', 'mainnet');
+
+            error_log('Wallet name: ' . $wallet_name);
+            error_log('Network: ' . $network);
+
+            try {
+                $result = Umbrella_Mines_Payout_Wallet::create_wallet($wallet_name, $network);
+
+                error_log('create_wallet returned: ' . print_r($result, true));
+
+                if (is_wp_error($result)) {
+                    error_log('ERROR: ' . $result->get_error_message());
+                    set_transient('umbrella_mines_admin_error_' . get_current_user_id(), $result->get_error_message(), 30);
+                    wp_redirect(admin_url('admin.php?page=umbrella-mines-merge-addresses&error=1'));
+                    exit;
+                } else {
+                    error_log('SUCCESS: Wallet created with ID ' . $result['wallet_id']);
+                    error_log('Mnemonic length: ' . strlen($result['mnemonic']));
+                    error_log('Address: ' . $result['address']);
+
+                    set_transient('umbrella_mines_payout_mnemonic_' . get_current_user_id(), $result['mnemonic'], 300);
+                    error_log('Transient set, redirecting to created=1');
+                    wp_redirect(admin_url('admin.php?page=umbrella-mines-merge-addresses&created=1'));
+                    exit;
+                }
+            } catch (Exception $e) {
+                error_log('=== WALLET GENERATION EXCEPTION ===');
+                error_log('Error: ' . $e->getMessage());
+                error_log('File: ' . $e->getFile() . ':' . $e->getLine());
+                error_log('Stack trace: ' . $e->getTraceAsString());
+
+                set_transient('umbrella_mines_admin_error_' . get_current_user_id(), 'Exception: ' . $e->getMessage(), 30);
+                wp_redirect(admin_url('admin.php?page=umbrella-mines-merge-addresses&error=1'));
+                exit;
+            }
+
+        } elseif ($action === 'import') {
+            $wallet_name = sanitize_text_field($_POST['wallet_name']);
+            $mnemonic = sanitize_textarea_field($_POST['mnemonic']);
+            $network = get_option('umbrella_mines_network', 'mainnet');
+
+            $result = Umbrella_Mines_Payout_Wallet::import_wallet($wallet_name, $mnemonic, $network);
+
+            if (is_wp_error($result)) {
+                set_transient('umbrella_mines_admin_error_' . get_current_user_id(), $result->get_error_message(), 30);
+                wp_redirect(admin_url('admin.php?page=umbrella-mines-merge-addresses&error=1'));
+                exit;
+            } else {
+                set_transient('umbrella_mines_admin_success_' . get_current_user_id(), 'Payout wallet imported successfully!', 30);
+                wp_redirect(admin_url('admin.php?page=umbrella-mines-merge-addresses&success=1'));
+                exit;
+            }
+        }
+    }
+
+    public function admin_merge_addresses() {
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'admin/merge-addresses.php';
     }
 
     /**
@@ -1619,6 +1758,121 @@ class Umbrella_Mines {
             wp_send_json_success('Stop signal sent');
         } else {
             wp_send_json_error('Failed to create stop signal file');
+        }
+    }
+
+    /**
+     * AJAX: Export payout wallet mnemonic
+     */
+    public function ajax_export_payout_mnemonic() {
+        check_ajax_referer('umbrella_payout_wallet', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/CardanoWalletPHP.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-payout-wallet.php';
+
+        $network = get_option('umbrella_mines_network', 'mainnet');
+        $wallet = Umbrella_Mines_Payout_Wallet::get_active_wallet($network);
+
+        if (!$wallet) {
+            wp_send_json_error('No payout wallet found');
+        }
+
+        $mnemonic = Umbrella_Mines_Payout_Wallet::get_mnemonic($wallet->id);
+
+        if (!$mnemonic) {
+            wp_send_json_error('Failed to decrypt mnemonic');
+        }
+
+        wp_send_json_success(['mnemonic' => $mnemonic]);
+    }
+
+    /**
+     * AJAX: Delete payout wallet
+     */
+    public function ajax_delete_payout_wallet() {
+        check_ajax_referer('umbrella_payout_wallet', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/CardanoWalletPHP.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-payout-wallet.php';
+
+        $network = get_option('umbrella_mines_network', 'mainnet');
+        $wallet = Umbrella_Mines_Payout_Wallet::get_active_wallet($network);
+
+        if (!$wallet) {
+            wp_send_json_error('No payout wallet found');
+        }
+
+        $result = Umbrella_Mines_Payout_Wallet::delete_wallet($wallet->id);
+
+        if ($result) {
+            wp_send_json_success('Payout wallet deleted');
+        } else {
+            wp_send_json_error('Failed to delete wallet');
+        }
+    }
+
+    /**
+     * AJAX: Merge all eligible wallets to payout address
+     */
+    public function ajax_merge_all_wallets() {
+        check_ajax_referer('umbrella_merge_wallets', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/CardanoWalletPHP.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-payout-wallet.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+
+        $network = get_option('umbrella_mines_network', 'mainnet');
+
+        // merge_all() now automatically uses the registered payout wallet
+        $result = Umbrella_Mines_Merge_Processor::merge_all($network);
+
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX: Merge single wallet to payout address
+     */
+    public function ajax_merge_single_wallet() {
+        check_ajax_referer('umbrella_merge_wallets', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        if (!isset($_POST['wallet_id'])) {
+            wp_send_json_error('Wallet ID required');
+        }
+
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/CardanoWalletPHP.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-payout-wallet.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+
+        $network = get_option('umbrella_mines_network', 'mainnet');
+
+        // Use the correct payout address
+        $correct_payout_address = 'addr1qyxzax7ncz2gmdsl3jrcpjtdceqfjuhgjprn2fpjsx5hhqkjm5fmh9vdhzn5k2uemdjjdehe67tljygwx2zp329eh46s33jlqa';
+
+        error_log("AJAX MERGE: Using payout address: " . $correct_payout_address);
+
+        $wallet_id = intval($_POST['wallet_id']);
+        $result = Umbrella_Mines_Merge_Processor::merge_wallet($wallet_id, $correct_payout_address);
+
+        if ($result['success']) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result['error']);
         }
     }
 }
