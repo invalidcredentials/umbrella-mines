@@ -77,11 +77,13 @@ class Umbrella_Mines_System_Requirements {
         // Check common PHP CLI paths on Linux/Unix
         $possible_paths = array(
             '/usr/bin/php',
+            '/usr/bin/php8.4',
             '/usr/bin/php8.3',
             '/usr/bin/php8.2',
             '/usr/bin/php8.1',
             '/usr/bin/php8.0',
             '/usr/local/bin/php',
+            '/opt/php/bin/php',
             defined('PHP_BINARY') ? PHP_BINARY : null,
         );
 
@@ -98,12 +100,12 @@ class Umbrella_Mines_System_Requirements {
         return array(
             'name' => 'PHP CLI',
             'required' => 'php binary',
-            'current' => $php_cli ?: 'Not detected',
+            'current' => $php_cli ?: 'Not auto-detected (may still be installed)',
             'passed' => $passed,
             'critical' => false, // Not critical since we can't verify without exec
             'message' => $passed
                 ? "PHP CLI detected at: {$php_cli}"
-                : "PHP CLI not detected. Install with: apt-get install php-cli (Ubuntu) or yum install php-cli (CentOS)",
+                : "PHP CLI not auto-detected from web context. This is normal - if 'wp' command works in SSH, you're fine. Only needed for WP-CLI mining.",
         );
     }
 
