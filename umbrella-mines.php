@@ -642,6 +642,17 @@ class Umbrella_Mines {
 
         global $wpdb;
 
+        // CRITICAL: Check if crypto receipt exists - cannot reset if receipt is stored
+        $receipt_exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}umbrella_mining_receipts WHERE solution_id = %d",
+            $solution_id
+        ));
+
+        if ($receipt_exists) {
+            wp_send_json_error('Cannot reset - crypto receipt exists. Resetting would permanently delete proof of submission.');
+            return;
+        }
+
         $updated = $wpdb->update(
             $wpdb->prefix . 'umbrella_mining_solutions',
             array(

@@ -102,6 +102,11 @@ if (isset($_GET['submit_now']) && isset($_GET['_wpnonce'])) {
 
 global $wpdb;
 
+// Check if payout wallet exists
+require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-payout-wallet.php';
+$network = get_option('umbrella_mines_network', 'mainnet');
+$payout_wallet = Umbrella_Mines_Payout_Wallet::get_active_wallet($network);
+
 // Pagination
 $per_page = 50;
 $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
@@ -111,11 +116,12 @@ $offset = ($current_page - 1) * $per_page;
 $status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '';
 $where = $status_filter ? $wpdb->prepare("WHERE s.submission_status = %s", $status_filter) : '';
 
-// Get solutions
+// Get solutions (with receipt check to prevent accidental reset)
 $solutions = $wpdb->get_results("
-    SELECT s.*, w.address, w.derivation_path
+    SELECT s.*, w.address, w.derivation_path, r.id as receipt_id
     FROM {$wpdb->prefix}umbrella_mining_solutions s
     JOIN {$wpdb->prefix}umbrella_mining_wallets w ON s.wallet_id = w.id
+    LEFT JOIN {$wpdb->prefix}umbrella_mining_receipts r ON s.id = r.solution_id
     {$where}
     ORDER BY s.found_at DESC
     LIMIT {$per_page} OFFSET {$offset}
@@ -214,7 +220,15 @@ $status_counts = $wpdb->get_results("
                         <?php if (in_array($solution->submission_status, array('pending', 'failed', '', null))): ?>
                             <a href="?page=umbrella-mines-solutions&submit_now=<?php echo $solution->id; ?>&_wpnonce=<?php echo wp_create_nonce('submit_solution_' . $solution->id); ?>" class="button button-small button-primary">Submit</a>
                         <?php endif; ?>
-                        <a href="#" class="button button-small reset-status" data-id="<?php echo $solution->id; ?>">Reset</a>
+                        <?php /* MERGE DISABLED - donate_to endpoint not yet live
+                        if ($payout_wallet && $solution->submission_status === 'submitted'): ?>
+                            <a href="#" class="button button-small merge-wallet-btn" data-wallet-id="<?php echo $solution->wallet_id; ?>" data-address="<?php echo esc_attr($solution->address); ?>" style="background: #00ff41; color: #000; border: none;">Merge</a>
+                        <?php endif; */ ?>
+                        <?php if (!$solution->receipt_id): ?>
+                            <a href="#" class="button button-small reset-status" data-id="<?php echo $solution->id; ?>">Reset</a>
+                        <?php else: ?>
+                            <span class="button button-small" style="opacity: 0.5; cursor: not-allowed;" title="Cannot reset - crypto receipt exists">🔒 Locked</span>
+                        <?php endif; ?>
                         <a href="#" class="button button-small delete-solution" data-id="<?php echo $solution->id; ?>" style="color: #dc3232;">Delete</a>
                     </div>
                 </td>
@@ -456,6 +470,48 @@ jQuery(document).ready(function($) {
             alert('Failed to check export status. Please try again.');
         });
     });
+
+    /* MERGE DISABLED - donate_to endpoint not yet live
+    // Merge wallet button
+    $('.merge-wallet-btn').on('click', function(e) {
+        e.preventDefault();
+        var button = $(this);
+        var walletId = button.data('wallet-id');
+        var address = button.data('address');
+
+        if (!confirm('Merge wallet ' + address + ' to payout address?\n\nThis will use the donate_to API to transfer all accumulated rewards to your payout wallet.')) {
+            return;
+        }
+
+        button.prop('disabled', true);
+        button.html('⏳ Merging...');
+
+        $.ajax({
+            url: ajaxurl,
+            method: 'POST',
+            data: {
+                action: 'umbrella_merge_single_wallet',
+                nonce: '<?php echo wp_create_nonce('umbrella_merge_wallets'); ?>',
+                wallet_id: walletId
+            },
+            success: function(response) {
+                if (response.success) {
+                    alert('✅ Wallet merged successfully!\n\nSolutions consolidated: ' + (response.data.solutions_consolidated || 0));
+                    location.reload();
+                } else {
+                    alert('❌ Merge failed: ' + response.data);
+                    button.prop('disabled', false);
+                    button.html('Merge');
+                }
+            },
+            error: function() {
+                alert('❌ AJAX error occurred');
+                button.prop('disabled', false);
+                button.html('Merge');
+            }
+        });
+    });
+    */
 });
 
 // Add rotation animation for loading spinner
