@@ -763,8 +763,9 @@ class Umbrella_Mines {
 
         global $wpdb;
 
+        // Get full solution + wallet data
         $solution = $wpdb->get_row($wpdb->prepare("
-            SELECT s.*, w.address, w.derivation_path
+            SELECT s.*, w.*
             FROM {$wpdb->prefix}umbrella_mining_solutions s
             JOIN {$wpdb->prefix}umbrella_mining_wallets w ON s.wallet_id = w.id
             WHERE s.id = %d
@@ -775,33 +776,260 @@ class Umbrella_Mines {
             wp_die();
         }
 
-        echo '<table class="widefat">';
-        echo '<tr><th>ID</th><td>' . esc_html($solution->id) . '</td></tr>';
-        echo '<tr><th>Challenge</th><td><code>' . esc_html($solution->challenge_id) . '</code></td></tr>';
-        echo '<tr><th>Nonce</th><td><code>' . esc_html($solution->nonce) . '</code></td></tr>';
-        echo '<tr><th>Address</th><td><code style="font-size: 10px;">' . esc_html($solution->address) . '</code></td></tr>';
-        echo '<tr><th>Derivation Path</th><td><code>' . esc_html($solution->derivation_path ?: 'N/A') . '</code></td></tr>';
-        echo '<tr><th>Hash</th><td><code style="font-size: 10px; word-break: break-all;">' . esc_html($solution->hash_result) . '</code></td></tr>';
-        echo '<tr><th>Difficulty</th><td><code>' . esc_html($solution->difficulty) . '</code></td></tr>';
-        echo '<tr><th>Found At</th><td>' . esc_html($solution->found_at) . '</td></tr>';
-        echo '<tr><th>Status</th><td><strong>' . esc_html(strtoupper($solution->submission_status)) . '</strong></td></tr>';
-
-        if ($solution->submission_error) {
-            echo '<tr><th>Error</th><td><pre>' . esc_html($solution->submission_error) . '</pre></td></tr>';
-        }
-
-        // Check for receipt
+        // Get receipt if exists
         $receipt = $wpdb->get_row($wpdb->prepare("
             SELECT * FROM {$wpdb->prefix}umbrella_mining_receipts
             WHERE solution_id = %d
         ", $solution_id));
 
-        if ($receipt) {
-            echo '<tr><th>Receipt</th><td><pre>' . esc_html($receipt->crypto_receipt) . '</pre></td></tr>';
-            echo '<tr><th>Signature</th><td><code style="word-break: break-all;">' . esc_html($receipt->signature) . '</code></td></tr>';
-        }
+        // Format status color
+        $status_colors = array(
+            'pending' => '#999',
+            'queued' => '#0073aa',
+            'submitted' => '#46b450',
+            'confirmed' => '#46b450',
+            'failed' => '#dc3232'
+        );
+        $status_color = $status_colors[$solution->submission_status] ?? '#666';
 
-        echo '</table>';
+        ?>
+        <style>
+        .solution-details-section {
+            background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
+            border-left: 4px solid #00ff41;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .solution-details-section h3 {
+            color: #00ff41;
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin: 0 0 15px 0;
+        }
+        .solution-details-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .solution-details-table tr {
+            border-bottom: 1px solid #2a3f5f;
+        }
+        .solution-details-table tr:last-child {
+            border-bottom: none;
+        }
+        .solution-details-table th {
+            color: #00ff41;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 10px 15px 10px 0;
+            text-align: left;
+            vertical-align: top;
+            width: 200px;
+        }
+        .solution-details-table td {
+            color: #e0e0e0;
+            font-size: 13px;
+            padding: 10px 0;
+            word-break: break-all;
+        }
+        .solution-details-table code {
+            background: rgba(0, 255, 65, 0.1);
+            color: #00ff41;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+        }
+        .solution-details-table pre {
+            background: rgba(0, 255, 65, 0.05);
+            border: 1px solid rgba(0, 255, 65, 0.2);
+            color: #00ff41;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            overflow-x: auto;
+            margin: 0;
+        }
+        .status-badge-details {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .receipt-section {
+            background: rgba(0, 255, 65, 0.05);
+            border-left: 4px solid #00d4ff;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .receipt-section h3 {
+            color: #00d4ff;
+        }
+        </style>
+
+        <!-- Wallet Info -->
+        <div class="solution-details-section">
+            <h3>💼 Wallet Information</h3>
+            <table class="solution-details-table">
+                <tr>
+                    <th>Wallet ID</th>
+                    <td><code><?php echo esc_html($solution->wallet_id); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Address</th>
+                    <td><code><?php echo esc_html($solution->address); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Derivation Path</th>
+                    <td><code><?php echo esc_html($solution->derivation_path ?: 'N/A'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Network</th>
+                    <td><code><?php echo esc_html($solution->network ?? 'mainnet'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Payment PKey</th>
+                    <td><code><?php echo esc_html($solution->payment_pkey ?? 'N/A'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Payment KeyHash</th>
+                    <td><code><?php echo esc_html($solution->payment_keyhash ?? 'N/A'); ?></code></td>
+                </tr>
+                <?php if (!empty($solution->registration_signature)): ?>
+                <tr>
+                    <th>Registered At</th>
+                    <td><?php echo esc_html($solution->registered_at); ?></td>
+                </tr>
+                <?php endif; ?>
+                <tr>
+                    <th>Created At</th>
+                    <td><?php echo esc_html($solution->created_at); ?></td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Solution Info -->
+        <div class="solution-details-section">
+            <h3>⛏️ Solution Details</h3>
+            <table class="solution-details-table">
+                <tr>
+                    <th>Solution ID</th>
+                    <td><code><?php echo esc_html($solution->id); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Challenge ID</th>
+                    <td><code><?php echo esc_html($solution->challenge_id); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Nonce</th>
+                    <td><code><?php echo esc_html($solution->nonce); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Hash Result</th>
+                    <td><code><?php echo esc_html($solution->hash_result); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Difficulty</th>
+                    <td><code><?php echo esc_html($solution->difficulty); ?></code></td>
+                </tr>
+                <tr>
+                    <th>No Pre-Mine</th>
+                    <td><code><?php echo esc_html($solution->no_pre_mine); ?></code></td>
+                </tr>
+                <tr>
+                    <th>No Pre-Mine Hour</th>
+                    <td><code><?php echo esc_html($solution->no_pre_mine_hour ?? 'N/A'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Latest Submission</th>
+                    <td><?php echo esc_html($solution->latest_submission); ?></td>
+                </tr>
+                <tr>
+                    <th>Found At</th>
+                    <td><?php echo esc_html($solution->found_at); ?></td>
+                </tr>
+                <tr>
+                    <th>Status</th>
+                    <td><span class="status-badge-details" style="background: <?php echo $status_color; ?>; color: #fff;"><?php echo esc_html(strtoupper($solution->submission_status)); ?></span></td>
+                </tr>
+                <?php if ($solution->submitted_at): ?>
+                <tr>
+                    <th>Submitted At</th>
+                    <td><?php echo esc_html($solution->submitted_at); ?></td>
+                </tr>
+                <?php endif; ?>
+                <?php if ($solution->submission_error): ?>
+                <tr>
+                    <th>Error</th>
+                    <td><pre><?php echo esc_html($solution->submission_error); ?></pre></td>
+                </tr>
+                <?php endif; ?>
+            </table>
+        </div>
+
+        <?php if (!empty($solution->registration_signature)): ?>
+        <!-- Registration Info -->
+        <div class="solution-details-section">
+            <h3>📝 Registration</h3>
+            <table class="solution-details-table">
+                <tr>
+                    <th>Signature</th>
+                    <td><code><?php echo esc_html($solution->registration_signature); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Public Key</th>
+                    <td><code><?php echo esc_html($solution->registration_pubkey ?? 'N/A'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Registered At</th>
+                    <td><?php echo esc_html($solution->registered_at); ?></td>
+                </tr>
+            </table>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($receipt): ?>
+        <!-- Crypto Receipt -->
+        <div class="receipt-section">
+            <h3>🧾 Crypto Receipt (Proof of Submission)</h3>
+            <table class="solution-details-table">
+                <tr>
+                    <th>Receipt ID</th>
+                    <td><code><?php echo esc_html($receipt->id); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Full Receipt</th>
+                    <td><pre><?php echo esc_html($receipt->crypto_receipt); ?></pre></td>
+                </tr>
+                <tr>
+                    <th>Preimage</th>
+                    <td><code><?php echo esc_html($receipt->preimage); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Signature</th>
+                    <td><code><?php echo esc_html($receipt->signature); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Timestamp</th>
+                    <td><?php echo esc_html($receipt->timestamp); ?></td>
+                </tr>
+            </table>
+        </div>
+        <?php else: ?>
+        <div style="text-align: center; padding: 40px; color: #666; font-style: italic;">
+            No crypto receipt yet - submit this solution to receive API confirmation
+        </div>
+        <?php endif; ?>
+        <?php
 
         wp_die();
     }
