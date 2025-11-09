@@ -230,12 +230,8 @@ class NightMine_MiningEngine {
                 );
             }
 
-            // Progress update every 10k hashes
-            if ($i > 0 && $i % 10000 === 0) {
-                $elapsed = microtime(true) - $start_time;
-                $hashrate = $hashes_done / $elapsed;
-                error_log(sprintf("Mining progress: %d hashes, %.2f H/s", $hashes_done, $hashrate));
-            }
+            // Progress logging removed to prevent log overflow
+            // Only errors and solutions are logged
         }
 
         // No solution found
