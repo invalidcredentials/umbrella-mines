@@ -49,34 +49,24 @@ class Umbrella_Mines_System_Requirements {
     }
 
     /**
-     * Check PHP version (8.3.x required for Rust FFI compatibility)
+     * Check PHP version (8.0+ recommended for best compatibility)
      */
     private static function check_php_version() {
         $version = PHP_VERSION;
-        $required = '8.3.0';
+        $required = '8.0.0';
 
-        // Extract major.minor from version string
-        $current_parts = explode('.', $version);
-        $required_parts = explode('.', $required);
-
-        // Check if major.minor match (accept any 8.3.x patch version)
-        $version_match = (
-            isset($current_parts[0], $current_parts[1]) &&
-            $current_parts[0] == $required_parts[0] &&
-            $current_parts[1] == $required_parts[1]
-        );
-
-        $passed = $version_match;
+        // Check if PHP 8.0 or higher
+        $passed = version_compare($version, $required, '>=');
 
         return array(
             'name' => 'PHP Version',
-            'required' => '8.3.x',
+            'required' => '8.0+',
             'current' => $version,
             'passed' => $passed,
-            'critical' => true,
+            'critical' => false, // NOT critical - plugin will work on any modern PHP
             'message' => $passed
-                ? "PHP {$version} - Compatible with 8.3.x"
-                : "PHP {$version} detected. Requires PHP 8.3.x for Rust FFI compatibility. Install from: https://www.php.net/downloads",
+                ? "PHP {$version} - Compatible"
+                : "PHP {$version} detected. PHP 8.0+ recommended for best performance.",
         );
     }
 
