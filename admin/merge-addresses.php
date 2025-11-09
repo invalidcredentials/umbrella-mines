@@ -444,18 +444,13 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
     }
 
     .coming-soon-title {
-        font-size: 42px;
+        font-size: 38px;
         font-weight: 700;
         color: #00ff41;
-        margin: 0 0 20px 0;
-        letter-spacing: 2px;
+        margin: 0 0 25px 0;
+        letter-spacing: 3px;
         text-transform: uppercase;
-    }
-
-    .coming-soon-icon {
-        font-size: 48px;
-        margin-bottom: 20px;
-        opacity: 0.8;
+        text-shadow: 0 0 20px rgba(0, 255, 65, 0.6);
     }
 
     .coming-soon-message {
@@ -496,11 +491,30 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
     }
 
     .coming-soon-tagline {
-        color: #00ff41;
-        font-size: 18px;
+        margin-top: 30px;
+        font-size: 22px;
         font-weight: 700;
-        margin-top: 25px;
-        letter-spacing: 1px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+    }
+
+    .coming-soon-tagline .umbrella-float {
+        font-size: 32px;
+        color: #00ff41;
+        text-shadow: 0 0 15px rgba(0, 255, 65, 0.7);
+        display: inline-block;
+        animation: float 3s ease-in-out infinite;
+        margin-right: 8px;
+    }
+
+    .coming-soon-tagline .tagline-text {
+        color: #00ff41;
+        text-shadow: 0 0 12px rgba(0, 255, 65, 0.5);
+    }
+
+    @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-5px); }
     }
 
     .coming-soon-close {
@@ -805,25 +819,24 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
 
             <div class="coming-soon-badge">Coming Soon</div>
 
-            <div class="coming-soon-icon">🔀</div>
-
-            <h2 class="coming-soon-title">Merge Feature</h2>
+            <h2 class="coming-soon-title">Wallet Merge</h2>
 
             <div class="coming-soon-info">
                 <div class="coming-soon-info-title">
-                    <span>ℹ️</span>
-                    <span>Important Notice</span>
+                    <span>⚠️</span>
+                    <span>API Endpoint Not Yet Active</span>
                 </div>
-                <p>The <strong>donate_to</strong> endpoint is currently not functional on the Scavenger Mine API. As soon as this endpoint becomes operational, the merge functionality of Umbrella Mines will go live.</p>
+                <p>The Scavenger Mine <strong>donate_to</strong> endpoint is currently offline. Once Midnight activates this endpoint, wallet merging will go live immediately.</p>
 
-                <p><strong>What is Merge?</strong><br>
-                Merge allows you to combine all of your reward wallets from <em>any miner</em> into one singular Cardano address. No more managing dozens of separate wallets - consolidate everything into a single destination address with cryptographic proof of ownership.</p>
+                <p><strong>What is Wallet Merge?</strong><br>
+                Consolidate all your mining rewards from <strong>any Scavenger Mine implementation</strong> into a single Cardano address. Whether you're using Umbrella Mines, the official CLI miner, or any other tool - merge everything together with cryptographic signatures proving ownership.</p>
 
-                <p style="margin-bottom: 0;">Whether you're mining with Umbrella Mines, the official CLI miner, or any other implementation, this feature will let you merge all your scattered rewards into one convenient location.</p>
+                <p style="margin-bottom: 0;"><strong>No more wallet sprawl.</strong> One destination address. All your rewards. Simple.</p>
             </div>
 
             <div class="coming-soon-tagline">
-                Umbrella Mines: We've Got You Covered ☂️
+                <span class="umbrella-float">☂</span>
+                <span class="tagline-text">Umbrella Mines: We've Got You Covered</span>
             </div>
 
             <div class="coming-soon-buttons">
