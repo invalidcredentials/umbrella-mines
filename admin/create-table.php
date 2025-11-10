@@ -150,6 +150,52 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
         KEY idx_started (started_at)
     ) $charset_collate;";
 
+    // Table 9: NIGHT rates by day (cached from API)
+    $table_night_rates = $wpdb->prefix . 'umbrella_night_rates';
+    $sql_night_rates = "CREATE TABLE {$table_night_rates} (
+        day int NOT NULL,
+        star_per_receipt bigint(20) NOT NULL,
+        fetched_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (day)
+    ) $charset_collate;";
+
+    // Table 10: Payout wallet (custodial wallet for merging rewards)
+    $table_payout_wallet = $wpdb->prefix . 'umbrella_mining_payout_wallet';
+    $sql_payout_wallet = "CREATE TABLE {$table_payout_wallet} (
+        id bigint(20) NOT NULL AUTO_INCREMENT,
+        wallet_name varchar(255) NOT NULL,
+        address varchar(255) NOT NULL,
+        mnemonic_encrypted text NOT NULL,
+        payment_skey_extended_encrypted text NOT NULL,
+        payment_pkey varchar(64) NOT NULL,
+        payment_keyhash varchar(56) NOT NULL,
+        network varchar(20) DEFAULT 'mainnet',
+        is_active tinyint(1) DEFAULT 1,
+        created_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY address (address)
+    ) $charset_collate;";
+
+    // Table 11: Merge operations (donate_to API tracking)
+    $table_merges = $wpdb->prefix . 'umbrella_mining_merges';
+    $sql_merges = "CREATE TABLE {$table_merges} (
+        id bigint(20) NOT NULL AUTO_INCREMENT,
+        original_address varchar(255) NOT NULL,
+        payout_address varchar(255) NOT NULL,
+        original_wallet_id bigint(20) NOT NULL,
+        merge_signature text NOT NULL,
+        merge_receipt longtext,
+        solutions_consolidated int DEFAULT 0,
+        status enum('pending','processing','success','failed') DEFAULT 'pending',
+        error_message text,
+        merged_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_original (original_address),
+        KEY idx_payout (payout_address),
+        KEY idx_status (status),
+        KEY idx_wallet (original_wallet_id)
+    ) $charset_collate;";
+
     // Create tables
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($sql_wallets);
@@ -160,6 +206,9 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
     dbDelta($sql_jobs);
     dbDelta($sql_progress);
     dbDelta($sql_processes);
+    dbDelta($sql_night_rates);
+    dbDelta($sql_payout_wallet);
+    dbDelta($sql_merges);
 
     // Set default config
     $defaults = array(
@@ -186,7 +235,7 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
         }
     }
 
-    echo '<div class="notice notice-success"><p><strong>Success!</strong> All 8 database tables have been created.</p></div>';
+    echo '<div class="notice notice-success"><p><strong>Success!</strong> All 11 database tables have been created.</p></div>';
 }
 
 // Check which tables exist
@@ -199,7 +248,10 @@ $table_names = array(
     'umbrella_mining_config',
     'umbrella_mining_jobs',
     'umbrella_mining_progress',
-    'umbrella_mining_processes'
+    'umbrella_mining_processes',
+    'umbrella_night_rates',
+    'umbrella_mining_payout_wallet',
+    'umbrella_mining_merges'
 );
 
 foreach ($table_names as $table) {
@@ -259,7 +311,7 @@ foreach ($table_names as $table) {
 
     <div class="card" style="max-width: 800px; margin-top: 20px;">
         <h2>What This Does</h2>
-        <p>This page creates the 8 required database tables for Umbrella Mines:</p>
+        <p>This page creates the 11 required database tables for Umbrella Mines:</p>
         <ol>
             <li><strong>wallets</strong> - Stores mining wallet addresses and keys</li>
             <li><strong>solutions</strong> - Stores found mining solutions</li>
@@ -269,6 +321,9 @@ foreach ($table_names as $table) {
             <li><strong>jobs</strong> - Mining job queue</li>
             <li><strong>progress</strong> - Live mining progress logs</li>
             <li><strong>processes</strong> - Tracks running mining processes</li>
+            <li><strong>night_rates</strong> - NIGHT token rates by day</li>
+            <li><strong>payout_wallet</strong> - Custodial wallet for merging rewards</li>
+            <li><strong>merges</strong> - Wallet merge operations tracking</li>
         </ol>
         <p><em>Note: Normally these tables are created automatically when you activate the plugin. Use this page if automatic creation failed.</em></p>
     </div>
