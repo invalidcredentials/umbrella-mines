@@ -178,6 +178,10 @@ cd /var/www/html
 # Kill any existing miners first
 pkill -f "umbrella-mines start"
 
+# The Pb Special
+cd /var/www/html
+  for i in {0..5}; do nohup wp umbrella-mines start --max-attempts=1000000 --derive=$i/$i/$i --allow-root > /dev/null 2>&1 & done
+
 # Start 6 miners
 wp umbrella-mines start --max-attempts=500000 --derive=0/0/0 --allow-root > /dev/null 2>&1 &
 sleep 1
