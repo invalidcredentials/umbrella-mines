@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.3.5
+ * Version: 0.4.0
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('UMBRELLA_MINES_VERSION', '0.3.5');
+define('UMBRELLA_MINES_VERSION', '0.4.0');
 define('UMBRELLA_MINES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('UMBRELLA_MINES_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('UMBRELLA_MINES_DATA_DIR', WP_CONTENT_DIR . '/uploads/umbrella-mines');
@@ -55,6 +55,7 @@ class Umbrella_Mines {
         add_action('wp_ajax_retry_solution', array($this, 'ajax_retry_solution'));
         add_action('wp_ajax_reset_solution_status', array($this, 'ajax_reset_solution_status'));
         add_action('wp_ajax_get_solution_details', array($this, 'ajax_get_solution_details'));
+        add_action('wp_ajax_get_wallet_details', array($this, 'ajax_get_wallet_details'));
 
         // Dashboard AJAX hooks
         add_action('wp_ajax_umbrella_toggle_autosubmit', array($this, 'ajax_toggle_autosubmit'));
@@ -754,7 +755,7 @@ class Umbrella_Mines {
      * AJAX: Get solution details
      */
     public function ajax_get_solution_details() {
-        $solution_id = isset($_POST['solution_id']) ? intval($_POST['solution_id']) : 0;
+        $solution_id = isset($_REQUEST['solution_id']) ? intval($_REQUEST['solution_id']) : 0;
 
         if (!$solution_id) {
             echo 'Invalid solution ID';
@@ -1027,6 +1028,256 @@ class Umbrella_Mines {
         <?php else: ?>
         <div style="text-align: center; padding: 40px; color: #666; font-style: italic;">
             No crypto receipt yet - submit this solution to receive API confirmation
+        </div>
+        <?php endif; ?>
+        <?php
+
+        wp_die();
+    }
+
+    /**
+     * AJAX: Get wallet details with solutions
+     */
+    public function ajax_get_wallet_details() {
+        $wallet_id = isset($_REQUEST['wallet_id']) ? intval($_REQUEST['wallet_id']) : 0;
+
+        if (!$wallet_id) {
+            echo 'Invalid wallet ID';
+            wp_die();
+        }
+
+        global $wpdb;
+
+        // Get wallet data
+        $wallet = $wpdb->get_row($wpdb->prepare("
+            SELECT * FROM {$wpdb->prefix}umbrella_mining_wallets WHERE id = %d
+        ", $wallet_id));
+
+        if (!$wallet) {
+            echo 'Wallet not found';
+            wp_die();
+        }
+
+        // Get solutions for this wallet
+        $solutions = $wpdb->get_results($wpdb->prepare("
+            SELECT s.*, r.id as receipt_id
+            FROM {$wpdb->prefix}umbrella_mining_solutions s
+            LEFT JOIN {$wpdb->prefix}umbrella_mining_receipts r ON s.id = r.solution_id
+            WHERE s.wallet_id = %d
+            ORDER BY s.found_at DESC
+        ", $wallet_id));
+
+        $solution_count = count($solutions);
+
+        // Format status colors
+        $status_colors = array(
+            'pending' => '#999',
+            'queued' => '#0073aa',
+            'submitted' => '#46b450',
+            'confirmed' => '#46b450',
+            'failed' => '#dc3232'
+        );
+
+        ?>
+        <style>
+        .wallet-details-section {
+            background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
+            border-left: 4px solid #00ff41;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .wallet-details-section h3 {
+            color: #00ff41;
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin: 0 0 15px 0;
+        }
+        .wallet-details-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .wallet-details-table tr {
+            border-bottom: 1px solid #2a3f5f;
+        }
+        .wallet-details-table tr:last-child {
+            border-bottom: none;
+        }
+        .wallet-details-table th {
+            color: #00ff41;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 10px 15px 10px 0;
+            text-align: left;
+            vertical-align: top;
+            width: 200px;
+        }
+        .wallet-details-table td {
+            color: #e0e0e0;
+            font-size: 13px;
+            padding: 10px 0;
+            word-break: break-all;
+        }
+        .wallet-details-table code {
+            background: rgba(0, 255, 65, 0.1);
+            color: #00ff41;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+        }
+        .solutions-list {
+            background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
+            border-left: 4px solid #00d4ff;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .solutions-list h3 {
+            color: #00d4ff;
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin: 0 0 15px 0;
+        }
+        .solution-item {
+            background: rgba(0, 212, 255, 0.05);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+        }
+        .solution-item:last-child {
+            margin-bottom: 0;
+        }
+        .solution-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .solution-item-id {
+            color: #00d4ff;
+            font-weight: 700;
+            font-size: 13px;
+        }
+        .solution-item-status {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .solution-item-details {
+            font-size: 12px;
+            color: #999;
+        }
+        .solution-item-details code {
+            background: rgba(0, 212, 255, 0.1);
+            color: #00d4ff;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+        </style>
+
+        <!-- Wallet Info -->
+        <div class="wallet-details-section">
+            <h3>💼 Wallet Information</h3>
+            <table class="wallet-details-table">
+                <tr>
+                    <th>Wallet ID</th>
+                    <td><code><?php echo esc_html($wallet->id); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Address</th>
+                    <td><code><?php echo esc_html($wallet->address); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Derivation Path</th>
+                    <td><code><?php echo esc_html($wallet->derivation_path ?: 'N/A'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Network</th>
+                    <td><code><?php echo esc_html($wallet->network ?? 'mainnet'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Payment PKey</th>
+                    <td><code><?php echo esc_html($wallet->payment_pkey ?? 'N/A'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Payment KeyHash</th>
+                    <td><code><?php echo esc_html($wallet->payment_keyhash ?? 'N/A'); ?></code></td>
+                </tr>
+                <?php if (!empty($wallet->registration_signature)): ?>
+                <tr>
+                    <th>Registration Signature</th>
+                    <td><code><?php echo esc_html($wallet->registration_signature); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Registration PubKey</th>
+                    <td><code><?php echo esc_html($wallet->registration_pubkey ?? 'N/A'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Registered At</th>
+                    <td><?php echo esc_html($wallet->registered_at); ?></td>
+                </tr>
+                <?php endif; ?>
+                <tr>
+                    <th>Created At</th>
+                    <td><?php echo esc_html($wallet->created_at); ?></td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Solutions -->
+        <?php if ($solution_count > 0): ?>
+        <div class="solutions-list">
+            <h3>⛏️ Solutions (<?php echo $solution_count; ?>)</h3>
+            <?php foreach ($solutions as $solution):
+                $status_color = $status_colors[$solution->submission_status] ?? '#666';
+            ?>
+            <div class="solution-item">
+                <div class="solution-item-header">
+                    <span class="solution-item-id">Solution #<?php echo esc_html($solution->id); ?></span>
+                    <span class="solution-item-status" style="background: <?php echo $status_color; ?>; color: #fff;">
+                        <?php echo esc_html(strtoupper($solution->submission_status)); ?>
+                        <?php if ($solution->receipt_id): ?>🔒<?php endif; ?>
+                    </span>
+                </div>
+                <div class="solution-item-details">
+                    <div style="margin-bottom: 5px;">
+                        <strong>Challenge:</strong> <code><?php echo esc_html($solution->challenge_id); ?></code>
+                        &nbsp;&nbsp;|&nbsp;&nbsp;
+                        <strong>Nonce:</strong> <code><?php echo esc_html($solution->nonce); ?></code>
+                    </div>
+                    <div style="margin-bottom: 5px;">
+                        <strong>Difficulty:</strong> <code><?php echo esc_html($solution->difficulty); ?></code>
+                        &nbsp;&nbsp;|&nbsp;&nbsp;
+                        <strong>Found:</strong> <?php echo esc_html($solution->found_at); ?>
+                    </div>
+                    <?php if ($solution->submitted_at): ?>
+                    <div>
+                        <strong>Submitted:</strong> <?php echo esc_html($solution->submitted_at); ?>
+                        <?php if ($solution->receipt_id): ?>
+                        <span style="color: #00ff41; font-weight: 700;">✓ Has Crypto Receipt</span>
+                        <?php endif; ?>
+                    </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php else: ?>
+        <div style="text-align: center; padding: 40px; color: #666; font-style: italic;">
+            No solutions found for this wallet yet
         </div>
         <?php endif; ?>
         <?php

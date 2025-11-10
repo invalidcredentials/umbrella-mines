@@ -264,10 +264,13 @@ $status_counts = $wpdb->get_results("
 
 <!-- Solution Details Modal -->
 <div id="solution-modal" class="umbrella-modal-overlay">
-    <div class="umbrella-modal">
+    <div class="umbrella-modal" style="position: relative;">
+        <button onclick="jQuery('#solution-modal').hide();" style="position: absolute; top: 20px; right: 20px; background: rgba(255, 51, 102, 0.2); border: 2px solid #ff3366; color: #ff3366; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; font-size: 24px; font-weight: bold; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease;">×</button>
         <h2>Solution Details</h2>
         <div id="solution-details"></div>
-        <button class="button" onclick="jQuery('#solution-modal').hide();">Close</button>
+        <div style="text-align: center; margin-top: 30px;">
+            <button class="button button-primary" onclick="jQuery('#solution-modal').hide();" style="background: linear-gradient(135deg, #00ff41 0%, #00d435 100%) !important; border: none !important; color: #000 !important; font-size: 14px !important; font-weight: 700 !important; padding: 12px 30px !important; border-radius: 8px !important; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 15px rgba(0, 255, 65, 0.3); transition: all 0.3s ease;">Close</button>
+        </div>
     </div>
 </div>
 
@@ -279,6 +282,13 @@ $status_counts = $wpdb->get_results("
         <button class="button button-primary" onclick="jQuery('#export-warning-modal').hide();">Got it!</button>
     </div>
 </div>
+
+<style>
+#solution-modal .umbrella-modal > button:first-child:hover {
+    background: rgba(255, 51, 102, 0.3) !important;
+    transform: rotate(90deg);
+}
+</style>
 
 <script>
 jQuery(document).ready(function($) {

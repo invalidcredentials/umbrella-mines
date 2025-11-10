@@ -114,10 +114,13 @@ $registered_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}umbrella
 
 <!-- Wallet Details Modal -->
 <div id="wallet-modal" class="umbrella-modal-overlay">
-    <div class="umbrella-modal">
+    <div class="umbrella-modal" style="position: relative;">
+        <button onclick="jQuery('#wallet-modal').hide();" style="position: absolute; top: 20px; right: 20px; background: rgba(255, 51, 102, 0.2); border: 2px solid #ff3366; color: #ff3366; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; font-size: 24px; font-weight: bold; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease;">×</button>
         <h2>Wallet Details</h2>
         <div id="wallet-details"></div>
-        <button class="button" onclick="jQuery('#wallet-modal').hide();">Close</button>
+        <div style="text-align: center; margin-top: 30px;">
+            <button class="button button-primary" onclick="jQuery('#wallet-modal').hide();" style="background: linear-gradient(135deg, #00ff41 0%, #00d435 100%) !important; border: none !important; color: #000 !important; font-size: 14px !important; font-weight: 700 !important; padding: 12px 30px !important; border-radius: 8px !important; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 15px rgba(0, 255, 65, 0.3); transition: all 0.3s ease;">Close</button>
+        </div>
     </div>
 </div>
 
@@ -130,15 +133,31 @@ $registered_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}umbrella
     </div>
 </div>
 
+<style>
+#wallet-modal .umbrella-modal > button:first-child:hover {
+    background: rgba(255, 51, 102, 0.3) !important;
+    transform: rotate(90deg);
+}
+</style>
+
 <script>
 jQuery(document).ready(function($) {
     $('.view-wallet').on('click', function(e) {
         e.preventDefault();
         var walletId = $(this).data('id');
 
-        // For now, just show basic info
-        // TODO: Add AJAX handler to load full wallet details
-        alert('Wallet details view coming soon! Wallet ID: ' + walletId);
+        // Load wallet details via AJAX
+        $.ajax({
+            url: ajaxurl,
+            data: {
+                action: 'get_wallet_details',
+                wallet_id: walletId
+            },
+            success: function(response) {
+                $('#wallet-details').html(response);
+                $('#wallet-modal').show();
+            }
+        });
     });
 
     // Export all data button
