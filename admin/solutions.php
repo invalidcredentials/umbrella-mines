@@ -139,6 +139,11 @@ $payout_wallet = Umbrella_Mines_Merge_Processor::get_registered_payout_wallet($n
 $payout_table = $wpdb->prefix . 'umbrella_mining_payout_wallet';
 $all_payout_addresses = $wpdb->get_col("SELECT address FROM {$payout_table}");
 
+// Add currently selected payout wallet (might be auto-selected from mining_wallets)
+if ($payout_wallet && !in_array($payout_wallet->address, $all_payout_addresses)) {
+    $all_payout_addresses[] = $payout_wallet->address;
+}
+
 // Pagination
 $per_page = 50;
 $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;

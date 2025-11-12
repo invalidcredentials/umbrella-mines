@@ -171,7 +171,10 @@ Watch your miner work in real-time with a cyberpunk-styled terminal showing hash
 
 ### Requirements
 - **WordPress** 5.0+
-- **PHP** 8.0+ with FFI extension enabled
+- **PHP** 8.0+ with FFI and BCMath extensions enabled
+  - **FFI Extension:** Required for high-performance hashing via compiled libraries
+  - **BCMath Extension:** Required for Ed25519 cryptographic signing (wallet registration and merge operations)
+  - **Installation:** `sudo apt-get install php-ffi php-bcmath` (adjust version as needed, e.g., `php8.2-bcmath`)
   - **CRITICAL:** PHP executable version and php.ini configuration MUST match exactly
   - Common error: Using PHP 8.3.17 executable with PHP 8.2.27 ini file causes database connection failures
   - Solution: Update site's PHP version in Local to match your lightning-services PHP version
