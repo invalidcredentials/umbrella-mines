@@ -42,8 +42,7 @@ Shared hosting providers typically **block or kill** long-running PHP processes 
 
 **System Requirements:**
 - Windows, Linux, or macOS
-- **PHP 8.3.17 EXACTLY** (required for Rust FFI compatibility)
-- FFI extension enabled
+- **PHP 8.0+** with FFI extension enabled
 - **IMPORTANT:** PHP version MUST match between PHP-CLI and php.ini configuration
   - If using Local by Flywheel, ensure site's PHP version matches lightning-services PHP version
   - Mismatched versions will cause "Error establishing a database connection"
@@ -90,7 +89,7 @@ No configuration. No command-line. Just click "START MINING" and watch it work.
 
 ### System Requirements Checker (NEW in v0.3.0)
 - Automatic validation of all dependencies on dashboard load
-- Checks PHP version (8.3.17), FFI extension, libraries, and permissions
+- Checks PHP version (8.0+), FFI extension, libraries, and permissions
 - Collapsible panel with detailed status for each requirement
 - Platform-specific installation instructions for missing dependencies
 - Prevents wasted time troubleshooting - know what's missing instantly
