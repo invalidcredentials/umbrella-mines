@@ -74,6 +74,10 @@ class Umbrella_Mines {
         add_action('wp_ajax_umbrella_delete_payout_wallet', array($this, 'ajax_delete_payout_wallet'));
         add_action('wp_ajax_umbrella_merge_all_wallets', array($this, 'ajax_merge_all_wallets'));
         add_action('wp_ajax_umbrella_merge_single_wallet', array($this, 'ajax_merge_single_wallet'));
+        add_action('wp_ajax_umbrella_export_all_merged', array($this, 'ajax_export_all_merged'));
+        add_action('wp_ajax_get_merge_details', array($this, 'ajax_get_merge_details'));
+        add_action('wp_ajax_umbrella_import_payout_wallet', array($this, 'ajax_import_payout_wallet'));
+        add_action('wp_ajax_umbrella_clear_imported_wallet', array($this, 'ajax_clear_imported_wallet'));
 
         // Public display hooks
         add_action('init', array($this, 'register_public_display_rewrite'));
@@ -783,6 +787,15 @@ class Umbrella_Mines {
             WHERE solution_id = %d
         ", $solution_id));
 
+        // Get merge data for this wallet (if merged)
+        $merge = $wpdb->get_row($wpdb->prepare("
+            SELECT * FROM {$wpdb->prefix}umbrella_mining_merges
+            WHERE original_wallet_id = %d
+            AND status = 'success'
+            ORDER BY merged_at DESC
+            LIMIT 1
+        ", $solution->wallet_id));
+
         // Format status color
         $status_colors = array(
             'pending' => '#999',
@@ -835,7 +848,9 @@ class Umbrella_Mines {
             color: #e0e0e0;
             font-size: 13px;
             padding: 10px 0;
-            word-break: break-all;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            max-width: 600px;
         }
         .solution-details-table code {
             background: rgba(0, 255, 65, 0.1);
@@ -844,6 +859,11 @@ class Umbrella_Mines {
             border-radius: 4px;
             font-family: 'Courier New', monospace;
             font-size: 11px;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            white-space: pre-wrap;
+            display: inline-block;
+            max-width: 100%;
         }
         .solution-details-table pre {
             background: rgba(0, 255, 65, 0.05);
@@ -853,8 +873,11 @@ class Umbrella_Mines {
             border-radius: 6px;
             font-family: 'Courier New', monospace;
             font-size: 11px;
-            overflow-x: auto;
             margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            max-width: 100%;
         }
         .status-badge-details {
             display: inline-block;
@@ -1028,6 +1051,56 @@ class Umbrella_Mines {
         <?php else: ?>
         <div style="text-align: center; padding: 40px; color: #666; font-style: italic;">
             No crypto receipt yet - submit this solution to receive API confirmation
+        </div>
+        <?php endif; ?>
+
+        <?php if ($merge): ?>
+        <!-- Merge Receipt -->
+        <div class="receipt-section" style="border-left-color: #ffaa00;">
+            <h3 style="color: #ffaa00;">🔀 Wallet Merge Receipt</h3>
+            <table class="solution-details-table">
+                <tr>
+                    <th>Merge Status</th>
+                    <td><span class="status-badge-details" style="background: #46b450; color: #fff;">✅ MERGED</span></td>
+                </tr>
+                <?php
+                // Decode merge receipt JSON
+                $merge_data = json_decode($merge->merge_receipt, true);
+                if ($merge_data && isset($merge_data['donation_id'])): ?>
+                <tr>
+                    <th>Donation ID</th>
+                    <td><code><?php echo esc_html($merge_data['donation_id']); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Message</th>
+                    <td><?php echo esc_html($merge_data['message'] ?? 'N/A'); ?></td>
+                </tr>
+                <tr>
+                    <th>From Address</th>
+                    <td><code><?php echo esc_html($merge_data['original_address'] ?? $merge->original_address); ?></code></td>
+                </tr>
+                <tr>
+                    <th>To Address</th>
+                    <td><code><?php echo esc_html($merge_data['destination_address'] ?? $merge->payout_address); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Solutions Consolidated</th>
+                    <td><strong><?php echo esc_html($merge_data['solutions_consolidated'] ?? $merge->solutions_consolidated); ?></strong> solution(s)</td>
+                </tr>
+                <tr>
+                    <th>Merge Timestamp</th>
+                    <td><?php echo esc_html($merge_data['timestamp'] ?? $merge->merged_at); ?></td>
+                </tr>
+                <tr>
+                    <th>Merge Signature</th>
+                    <td><code><?php echo esc_html(substr($merge->merge_signature, 0, 100)); ?>...</code></td>
+                </tr>
+                <tr>
+                    <th>Full Merge Receipt</th>
+                    <td><pre><?php echo esc_html(json_encode($merge_data, JSON_PRETTY_PRINT)); ?></pre></td>
+                </tr>
+                <?php endif; ?>
+            </table>
         </div>
         <?php endif; ?>
         <?php
@@ -1920,6 +1993,9 @@ class Umbrella_Mines {
 
         global $wpdb;
 
+        // Load encryption helper for mnemonic decryption
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/UmbrellaMines_EncryptionHelper.php';
+
         // Check for pending/non-submitted solutions
         $pending_count = $wpdb->get_var("
             SELECT COUNT(*)
@@ -1954,12 +2030,53 @@ class Umbrella_Mines {
             ));
         }
 
+        // Get active payout wallet
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+        $network = get_option('umbrella_mines_network', 'mainnet');
+        $payout_wallet = Umbrella_Mines_Merge_Processor::get_registered_payout_wallet($network);
+
+        // Prepare payout wallet info for export
+        $payout_wallet_export = null;
+        if ($payout_wallet) {
+            // Decrypt mnemonic
+            $payout_mnemonic = '';
+            if (!empty($payout_wallet->mnemonic_encrypted)) {
+                $payout_mnemonic = UmbrellaMines_EncryptionHelper::decrypt($payout_wallet->mnemonic_encrypted);
+                if ($payout_mnemonic === false) {
+                    $payout_mnemonic = '[DECRYPTION_FAILED]';
+                }
+            }
+
+            // Check if it's imported (has wallet_name) or auto-selected
+            $is_imported = property_exists($payout_wallet, 'wallet_name');
+
+            $payout_wallet_export = array(
+                '⭐_IMPORTANT' => '🔑 THIS IS YOUR PAYOUT WALLET - All merged rewards go here',
+                'wallet_type' => $is_imported ? 'IMPORTED (User-provided)' : 'AUTO-SELECTED (From mining wallets)',
+                'address' => $payout_wallet->address,
+                'mnemonic' => $payout_mnemonic, // 🔐 CRITICAL - Full 24-word phrase
+                'payment_skey_extended' => property_exists($payout_wallet, 'payment_skey_extended') ? $payout_wallet->payment_skey_extended : (property_exists($payout_wallet, 'payment_skey_extended_encrypted') ? '[ENCRYPTED - Use mnemonic to recover]' : null),
+                'payment_pkey' => $payout_wallet->payment_pkey,
+                'payment_keyhash' => $payout_wallet->payment_keyhash,
+                'network' => $payout_wallet->network,
+                'created_at' => $payout_wallet->created_at,
+                'cardanoscan_link' => $network === 'mainnet'
+                    ? 'https://cardanoscan.io/address/' . $payout_wallet->address
+                    : 'https://preprod.cardanoscan.io/address/' . $payout_wallet->address
+            );
+
+            if ($is_imported && property_exists($payout_wallet, 'wallet_name')) {
+                $payout_wallet_export['wallet_name'] = $payout_wallet->wallet_name;
+            }
+        }
+
         // Build wallet-centric export structure (ONLY wallets with submitted/confirmed solutions)
         $export_data = array(
             'export_date' => current_time('mysql'),
             'export_version' => '1.0',
             'plugin_version' => UMBRELLA_MINES_VERSION,
             'export_note' => 'This export only includes wallets with submitted or confirmed solutions',
+            'PAYOUT_WALLET' => $payout_wallet_export, // 🎯 PAYOUT DESTINATION - Listed first for easy access
             'wallets' => array()
         );
 
@@ -2021,6 +2138,24 @@ class Umbrella_Mines {
                 $wallets_with_solutions++;
             }
 
+            // Get merge data for this wallet (if merged)
+            $merge = $wpdb->get_row($wpdb->prepare("
+                SELECT * FROM {$wpdb->prefix}umbrella_mining_merges
+                WHERE original_wallet_id = %d
+                AND status = 'success'
+                ORDER BY merged_at DESC
+                LIMIT 1
+            ", $wallet_id), ARRAY_A);
+
+            // Decrypt mnemonic for export
+            $mnemonic_decrypted = '';
+            if (!empty($wallet['mnemonic_encrypted'])) {
+                $mnemonic_decrypted = UmbrellaMines_EncryptionHelper::decrypt($wallet['mnemonic_encrypted']);
+                if ($mnemonic_decrypted === false) {
+                    $mnemonic_decrypted = '[DECRYPTION_FAILED]';
+                }
+            }
+
             // Build wallet export object
             $wallet_export = array(
                 'wallet_id' => (int)$wallet['id'],
@@ -2030,6 +2165,7 @@ class Umbrella_Mines {
                 'payment_pkey' => $wallet['payment_pkey'],
                 'payment_keyhash' => $wallet['payment_keyhash'],
                 'network' => $wallet['network'],
+                'mnemonic' => $mnemonic_decrypted, // 🔐 CRITICAL - Decrypted mnemonic phrase
                 'registration' => array(
                     'signature' => $wallet['registration_signature'],
                     'pubkey' => $wallet['registration_pubkey'],
@@ -2042,7 +2178,28 @@ class Umbrella_Mines {
                     'confirmed_solutions' => $confirmed_count,
                     'pending_solutions' => count($solutions) - $confirmed_count,
                     'total_receipts' => $receipt_count
-                )
+                ),
+                'merge' => $merge ? (function($merge) {
+                    // Decrypt merge mnemonic
+                    $merge_mnemonic = '';
+                    if (!empty($merge['mnemonic_encrypted'])) {
+                        $merge_mnemonic = UmbrellaMines_EncryptionHelper::decrypt($merge['mnemonic_encrypted']);
+                        if ($merge_mnemonic === false) {
+                            $merge_mnemonic = '[DECRYPTION_FAILED]';
+                        }
+                    }
+
+                    return array(
+                        'merge_id' => (int)$merge['id'],
+                        'payout_address' => $merge['payout_address'],
+                        'merge_signature' => $merge['merge_signature'],
+                        'merge_receipt' => json_decode($merge['merge_receipt'], true),
+                        'solutions_consolidated' => (int)$merge['solutions_consolidated'],
+                        'status' => $merge['status'],
+                        'mnemonic' => $merge_mnemonic, // 🔐 CRITICAL - Decrypted mnemonic
+                        'merged_at' => $merge['merged_at']
+                    );
+                })($merge) : null
             );
 
             $export_data['wallets'][] = $wallet_export;
@@ -2052,11 +2209,21 @@ class Umbrella_Mines {
         $export_data['total_wallets'] = count($wallets);
         $export_data['total_solutions'] = $total_solutions;
         $export_data['total_receipts'] = $total_receipts;
+
+        // Count merged wallets
+        $merged_wallets = $wpdb->get_var("
+            SELECT COUNT(DISTINCT original_wallet_id)
+            FROM {$wpdb->prefix}umbrella_mining_merges
+            WHERE status = 'success'
+        ");
+
         $export_data['summary'] = array(
             'wallets_with_solutions' => $wallets_with_solutions,
             'wallets_without_solutions' => count($wallets) - $wallets_with_solutions,
             'solutions_with_receipts' => $total_receipts,
-            'solutions_pending_receipt' => $total_solutions - $total_receipts
+            'solutions_pending_receipt' => $total_solutions - $total_receipts,
+            'merged_wallets' => (int)$merged_wallets,
+            'unmerged_wallets' => count($wallets) - (int)$merged_wallets
         );
 
         // Generate filename with timestamp
@@ -2351,18 +2518,634 @@ class Umbrella_Mines {
 
         $network = get_option('umbrella_mines_network', 'mainnet');
 
-        // Use the correct payout address
-        $correct_payout_address = 'addr1qyxzax7ncz2gmdsl3jrcpjtdceqfjuhgjprn2fpjsx5hhqkjm5fmh9vdhzn5k2uemdjjdehe67tljygwx2zp329eh46s33jlqa';
+        // Get dynamically selected payout wallet (must have: receipt, mnemonic, not merged, registered)
+        $payout_wallet = Umbrella_Mines_Merge_Processor::get_registered_payout_wallet($network);
 
-        error_log("AJAX MERGE: Using payout address: " . $correct_payout_address);
+        if (!$payout_wallet) {
+            wp_send_json_error('No eligible payout wallet found. Please ensure you have at least one wallet with confirmed solutions and mnemonic.');
+            return;
+        }
+
+        $payout_address = $payout_wallet->address;
+        error_log("AJAX MERGE: Using dynamically selected payout address: " . $payout_address);
 
         $wallet_id = intval($_POST['wallet_id']);
-        $result = Umbrella_Mines_Merge_Processor::merge_wallet($wallet_id, $correct_payout_address);
+        $result = Umbrella_Mines_Merge_Processor::merge_wallet($wallet_id, $payout_address);
 
         if ($result['success']) {
             wp_send_json_success($result);
         } else {
             wp_send_json_error($result['error']);
+        }
+    }
+
+    /**
+     * AJAX: Export all merged wallets data
+     */
+    public function ajax_export_all_merged() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+
+        global $wpdb;
+
+        // Load encryption helper for mnemonic decryption
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/UmbrellaMines_EncryptionHelper.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+
+        $merges_table = $wpdb->prefix . 'umbrella_mining_merges';
+        $wallets_table = $wpdb->prefix . 'umbrella_mining_wallets';
+
+        // Get active payout wallet
+        $network = get_option('umbrella_mines_network', 'mainnet');
+        $payout_wallet = Umbrella_Mines_Merge_Processor::get_registered_payout_wallet($network);
+
+        // Prepare payout wallet info for export
+        $payout_wallet_export = null;
+        if ($payout_wallet) {
+            // Decrypt mnemonic
+            $payout_mnemonic = '';
+            if (!empty($payout_wallet->mnemonic_encrypted)) {
+                $payout_mnemonic = UmbrellaMines_EncryptionHelper::decrypt($payout_wallet->mnemonic_encrypted);
+                if ($payout_mnemonic === false) {
+                    $payout_mnemonic = '[DECRYPTION_FAILED]';
+                }
+            }
+
+            // Check if it's imported (has wallet_name) or auto-selected
+            $is_imported = property_exists($payout_wallet, 'wallet_name');
+
+            $payout_wallet_export = array(
+                '⭐_IMPORTANT' => '🔑 THIS IS YOUR PAYOUT WALLET - All merged rewards go here',
+                'wallet_type' => $is_imported ? 'IMPORTED (User-provided)' : 'AUTO-SELECTED (From mining wallets)',
+                'address' => $payout_wallet->address,
+                'mnemonic' => $payout_mnemonic, // 🔐 CRITICAL - Full 24-word phrase
+                'payment_skey_extended' => property_exists($payout_wallet, 'payment_skey_extended') ? $payout_wallet->payment_skey_extended : (property_exists($payout_wallet, 'payment_skey_extended_encrypted') ? '[ENCRYPTED - Use mnemonic to recover]' : null),
+                'payment_pkey' => $payout_wallet->payment_pkey,
+                'payment_keyhash' => $payout_wallet->payment_keyhash,
+                'network' => $payout_wallet->network,
+                'created_at' => $payout_wallet->created_at,
+                'cardanoscan_link' => $network === 'mainnet'
+                    ? 'https://cardanoscan.io/address/' . $payout_wallet->address
+                    : 'https://preprod.cardanoscan.io/address/' . $payout_wallet->address
+            );
+
+            if ($is_imported && property_exists($payout_wallet, 'wallet_name')) {
+                $payout_wallet_export['wallet_name'] = $payout_wallet->wallet_name;
+            }
+        }
+
+        // Get all successful merges with wallet data
+        $merges = $wpdb->get_results("
+            SELECT m.*, w.address as original_address, w.derivation_path, w.created_at as wallet_created_at
+            FROM {$merges_table} m
+            LEFT JOIN {$wallets_table} w ON m.original_wallet_id = w.id
+            WHERE m.status = 'success'
+            ORDER BY m.merged_at DESC
+        ", ARRAY_A);
+
+        $export_data = [
+            'export_date' => current_time('mysql'),
+            'export_type' => 'merged_wallets',
+            'PAYOUT_WALLET' => $payout_wallet_export, // 🎯 PAYOUT DESTINATION - Listed first for easy access
+            'plugin_version' => UMBRELLA_MINES_VERSION,
+            'total_merged' => count($merges),
+            'merges' => []
+        ];
+
+        foreach ($merges as $merge) {
+            // Decode the merge_receipt JSON
+            $receipt = json_decode($merge['merge_receipt'], true);
+
+            // Decrypt mnemonic for export
+            $mnemonic_decrypted = '';
+            if (!empty($merge['mnemonic_encrypted'])) {
+                $mnemonic_decrypted = UmbrellaMines_EncryptionHelper::decrypt($merge['mnemonic_encrypted']);
+                if ($mnemonic_decrypted === false) {
+                    $mnemonic_decrypted = '[DECRYPTION_FAILED]';
+                }
+            }
+
+            $export_data['merges'][] = [
+                'merge_id' => (int)$merge['id'],
+                'wallet_id' => (int)$merge['original_wallet_id'],
+                'original_address' => $merge['original_address'] ?? $merge['original_addr'],
+                'payout_address' => $merge['payout_address'],
+                'merge_signature' => $merge['merge_signature'],
+                'solutions_consolidated' => (int)$merge['solutions_consolidated'],
+                'merged_at' => $merge['merged_at'],
+                'wallet_created_at' => $merge['wallet_created_at'],
+                'derivation_path' => $merge['derivation_path'],
+                'mnemonic' => $mnemonic_decrypted, // 🔐 CRITICAL - Decrypted mnemonic phrase
+                'receipt' => $receipt,
+                'donation_id' => $receipt['donation_id'] ?? null,
+                'api_timestamp' => $receipt['timestamp'] ?? null
+            ];
+        }
+
+        // Summary stats
+        $total_solutions = array_sum(array_column($export_data['merges'], 'solutions_consolidated'));
+        $export_data['summary'] = [
+            'total_wallets_merged' => count($merges),
+            'total_solutions_consolidated' => $total_solutions,
+            'average_solutions_per_wallet' => count($merges) > 0 ? round($total_solutions / count($merges), 2) : 0
+        ];
+
+        // Generate filename
+        $filename = 'umbrella-mines-merged-wallets-' . date('Y-m-d-His') . '.json';
+
+        // Send JSON file
+        header('Content-Type: application/json');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: no-cache, must-revalidate');
+        header('Expires: 0');
+
+        echo json_encode($export_data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    /**
+     * AJAX: Get merge details for viewing
+     */
+    public function ajax_get_merge_details() {
+        $merge_id = isset($_REQUEST['merge_id']) ? intval($_REQUEST['merge_id']) : 0;
+
+        if (!$merge_id) {
+            echo 'Invalid merge ID';
+            wp_die();
+        }
+
+        global $wpdb;
+
+        $merges_table = $wpdb->prefix . 'umbrella_mining_merges';
+        $wallets_table = $wpdb->prefix . 'umbrella_mining_wallets';
+
+        // Get merge with wallet data
+        $merge = $wpdb->get_row($wpdb->prepare("
+            SELECT m.*, w.address as wallet_address, w.derivation_path, w.network, w.created_at as wallet_created_at
+            FROM {$merges_table} m
+            LEFT JOIN {$wallets_table} w ON m.original_wallet_id = w.id
+            WHERE m.id = %d
+        ", $merge_id));
+
+        if (!$merge) {
+            echo 'Merge not found';
+            wp_die();
+        }
+
+        // Decode receipt
+        $receipt = json_decode($merge->merge_receipt, true);
+
+        // Status color
+        $status_colors = [
+            'success' => '#46b450',
+            'failed' => '#dc3232',
+            'pending' => '#999',
+            'processing' => '#0073aa'
+        ];
+        $status_color = $status_colors[$merge->status] ?? '#666';
+
+        ?>
+        <style>
+        .merge-details-section {
+            background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
+            border-left: 4px solid #00ff41;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .merge-details-section h3 {
+            color: #00ff41;
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin: 0 0 15px 0;
+        }
+        .merge-details-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .merge-details-table tr {
+            border-bottom: 1px solid #2a3f5f;
+        }
+        .merge-details-table tr:last-child {
+            border-bottom: none;
+        }
+        .merge-details-table th {
+            color: #00ff41;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 10px 15px 10px 0;
+            text-align: left;
+            vertical-align: top;
+            width: 200px;
+        }
+        .merge-details-table td {
+            color: #e0e0e0;
+            font-size: 13px;
+            padding: 10px 0;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            max-width: 600px;
+        }
+        .merge-details-table code {
+            background: rgba(0, 255, 65, 0.1);
+            color: #00ff41;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            white-space: pre-wrap;
+            display: inline-block;
+            max-width: 100%;
+        }
+        .merge-details-table pre {
+            background: rgba(0, 255, 65, 0.05);
+            border: 1px solid rgba(0, 255, 65, 0.2);
+            color: #00ff41;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            max-width: 100%;
+        }
+        .status-badge-details {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        </style>
+
+        <!-- Merge Summary -->
+        <div class="merge-details-section">
+            <h3>🔀 Merge Summary</h3>
+            <table class="merge-details-table">
+                <tr>
+                    <th>Merge ID</th>
+                    <td><code><?php echo esc_html($merge->id); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Status</th>
+                    <td><span class="status-badge-details" style="background: <?php echo $status_color; ?>; color: #fff;"><?php echo esc_html(strtoupper($merge->status)); ?></span></td>
+                </tr>
+                <tr>
+                    <th>Merged At</th>
+                    <td><?php echo esc_html($merge->merged_at); ?></td>
+                </tr>
+                <tr>
+                    <th>Solutions Consolidated</th>
+                    <td><strong><?php echo esc_html($merge->solutions_consolidated); ?></strong> solution(s)</td>
+                </tr>
+                <?php if (isset($receipt['donation_id'])): ?>
+                <tr>
+                    <th>Donation ID</th>
+                    <td><code><?php echo esc_html($receipt['donation_id']); ?></code></td>
+                </tr>
+                <?php endif; ?>
+            </table>
+        </div>
+
+        <!-- Wallet Information -->
+        <div class="merge-details-section">
+            <h3>💼 Wallet Information</h3>
+            <table class="merge-details-table">
+                <tr>
+                    <th>Wallet ID</th>
+                    <td><code><?php echo esc_html($merge->original_wallet_id); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Original Address</th>
+                    <td><code><?php echo esc_html($merge->wallet_address ?? $merge->original_address); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Payout Address</th>
+                    <td><code><?php echo esc_html($merge->payout_address); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Derivation Path</th>
+                    <td><code><?php echo esc_html($merge->derivation_path ?: 'N/A'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Network</th>
+                    <td><code><?php echo esc_html($merge->network ?? 'mainnet'); ?></code></td>
+                </tr>
+                <tr>
+                    <th>Wallet Created</th>
+                    <td><?php echo esc_html($merge->wallet_created_at ?? 'N/A'); ?></td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Merge Signature -->
+        <div class="merge-details-section">
+            <h3>🔐 Cryptographic Proof</h3>
+            <table class="merge-details-table">
+                <tr>
+                    <th>Merge Signature</th>
+                    <td><code><?php echo esc_html($merge->merge_signature); ?></code></td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- API Receipt -->
+        <div class="merge-details-section" style="border-left-color: #00d4ff;">
+            <h3 style="color: #00d4ff;">🧾 API Receipt</h3>
+            <table class="merge-details-table">
+                <?php if ($receipt): ?>
+                    <?php if (isset($receipt['message'])): ?>
+                    <tr>
+                        <th>Message</th>
+                        <td><?php echo esc_html($receipt['message']); ?></td>
+                    </tr>
+                    <?php endif; ?>
+                    <?php if (isset($receipt['timestamp'])): ?>
+                    <tr>
+                        <th>API Timestamp</th>
+                        <td><?php echo esc_html($receipt['timestamp']); ?></td>
+                    </tr>
+                    <?php endif; ?>
+                    <tr>
+                        <th>Full Receipt</th>
+                        <td><pre><?php echo esc_html(json_encode($receipt, JSON_PRETTY_PRINT)); ?></pre></td>
+                    </tr>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="2" style="text-align: center; color: #666;">No receipt data available</td>
+                    </tr>
+                <?php endif; ?>
+            </table>
+        </div>
+
+        <?php if ($merge->error_message): ?>
+        <!-- Error Details -->
+        <div class="merge-details-section" style="border-left-color: #dc3232;">
+            <h3 style="color: #dc3232;">⚠️ Error Details</h3>
+            <table class="merge-details-table">
+                <tr>
+                    <th>Error Message</th>
+                    <td><pre><?php echo esc_html($merge->error_message); ?></pre></td>
+                </tr>
+            </table>
+        </div>
+        <?php endif; ?>
+        <?php
+
+        wp_die();
+    }
+
+    /**
+     * AJAX: Import custom payout wallet from mnemonic
+     */
+    public function ajax_import_payout_wallet() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $mnemonic = isset($_POST['mnemonic']) ? trim($_POST['mnemonic']) : '';
+
+        if (empty($mnemonic)) {
+            wp_send_json_error('Mnemonic phrase is required');
+        }
+
+        // Validate: must be 24 words
+        $words = preg_split('/\s+/', $mnemonic);
+        $words = array_filter($words, function($w) { return strlen($w) > 0; });
+
+        if (count($words) !== 24) {
+            wp_send_json_error('Mnemonic must be exactly 24 words (found ' . count($words) . ')');
+        }
+
+        $network = get_option('umbrella_mines_network', 'mainnet');
+        $user_derivation_path = isset($_POST['derivation_path']) ? sanitize_text_field($_POST['derivation_path']) : '0/0/0';
+
+        // Derive wallet from mnemonic
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/CardanoWalletPHP.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/UmbrellaMines_EncryptionHelper.php';
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+
+        try {
+            global $wpdb;
+
+            // Try to find matching wallet in database across common derivation paths
+            $found_match = false;
+            $wallet = null;
+            $address = null;
+            $used_path = null;
+
+            error_log("Searching for matching wallet in database...");
+
+            for ($i = 0; $i < 10; $i++) {
+                $test_wallet = CardanoWalletPHP::fromMnemonicWithPath($mnemonic, 0, 0, $i, '', $network);
+                $test_address = $test_wallet['addresses']['payment_address'];
+
+                // Check if this address exists in database
+                $existing = $wpdb->get_row($wpdb->prepare(
+                    "SELECT address, derivation_path, registered_at FROM {$wpdb->prefix}umbrella_mining_wallets WHERE address = %s",
+                    $test_address
+                ));
+
+                if ($existing && $existing->registered_at) {
+                    error_log("✅ Found matching registered wallet at path m/1852'/1815'/0'/0/$i - Address: $test_address");
+                    $wallet = $test_wallet;
+                    $address = $test_address;
+                    $used_path = "0/0/$i";
+                    $found_match = true;
+                    break;
+                }
+            }
+
+            // If not found in database, use user-provided derivation path
+            if (!$found_match) {
+                error_log("⚠️ No matching wallet found in database, using user-provided path: $user_derivation_path");
+
+                // Parse user derivation path
+                $path_parts = explode('/', $user_derivation_path);
+                if (count($path_parts) !== 3) {
+                    wp_send_json_error('Invalid derivation path format. Use: 0/0/0');
+                }
+
+                $account = intval($path_parts[0]);
+                $chain = intval($path_parts[1]);
+                $addr_index = intval($path_parts[2]);
+
+                $wallet = CardanoWalletPHP::fromMnemonicWithPath($mnemonic, $account, $chain, $addr_index, '', $network);
+                $address = $wallet['addresses']['payment_address'];
+                $used_path = $user_derivation_path;
+            }
+
+            error_log("=== IMPORT PAYOUT WALLET ===");
+            error_log("Address: $address");
+            error_log("Network: $network");
+
+            // Get T&C to get the registration message
+            $api_url = get_option('umbrella_mines_api_url', 'https://scavenger.prod.gd.midnighttge.io');
+            require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-scavenger-api.php';
+            $tandc = Umbrella_Mines_ScavengerAPI::get_tandc($api_url);
+
+            if (!$tandc || !isset($tandc['message'])) {
+                wp_send_json_error('Failed to fetch Terms & Conditions from API');
+            }
+
+            error_log("T&C message: " . $tandc['message']);
+
+            // Sign T&C message (the 'message' field, not 'content')
+            require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/CardanoCIP8Signer.php';
+            $signature_result = CardanoCIP8Signer::sign_message(
+                $tandc['message'],
+                $wallet['payment_skey_extended'],
+                $address,
+                $network
+            );
+            $signature_hex = $signature_result['signature'];
+            $pubkey = $signature_result['pubkey'];
+
+            error_log("Testing registration with signature: " . substr($signature_hex, 0, 50) . "...");
+
+            // Call /register endpoint to TEST if wallet is already registered
+            $endpoint = "{$api_url}/register/{$address}/{$signature_hex}/{$pubkey}";
+
+            $response = wp_remote_post($endpoint, [
+                'timeout' => 15,
+                'headers' => ['Content-Type' => 'application/json']
+            ]);
+
+            global $wpdb;
+
+            if (is_wp_error($response)) {
+                error_log("API Error: " . $response->get_error_message());
+                wp_send_json_error('Failed to verify wallet registration: ' . $response->get_error_message());
+            }
+
+            $status_code = wp_remote_retrieve_response_code($response);
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+
+            error_log("Registration test - Status: $status_code");
+            error_log("Registration test - Body: $body");
+
+            $is_registered = false;
+
+            // 200, 201, or 409 = Successfully registered (API is idempotent, always returns 201)
+            if ($status_code === 200 || $status_code === 201 || $status_code === 409) {
+                $is_registered = true;
+                error_log("✅ Wallet IS registered (status $status_code)");
+            }
+            // "already registered" message in error = Also valid
+            else if (isset($data['error']) && stripos($data['error'], 'already registered') !== false) {
+                $is_registered = true;
+                error_log("✅ Wallet IS registered ('already registered' message)");
+            }
+            // Any other error
+            else {
+                error_log("❌ Registration test failed with status $status_code");
+                wp_send_json_error('Failed to verify wallet: ' . ($data['error'] ?? 'Unknown error'));
+            }
+
+            // Encrypt mnemonic before storing
+            $mnemonic_encrypted = UmbrellaMines_EncryptionHelper::encrypt($mnemonic);
+
+            // Store in payout_wallet table
+            $payout_table = $wpdb->prefix . 'umbrella_mining_payout_wallet';
+
+            // Check if we already have an active imported payout wallet
+            $existing_payout = $wpdb->get_row("SELECT * FROM {$payout_table} WHERE is_active = 1 LIMIT 1");
+
+            if ($existing_payout) {
+                // Deactivate old one
+                $wpdb->update(
+                    $payout_table,
+                    array('is_active' => 0),
+                    array('id' => $existing_payout->id),
+                    array('%d'),
+                    array('%d')
+                );
+            }
+
+            // Insert new imported wallet
+            $inserted = $wpdb->insert(
+                $payout_table,
+                array(
+                    'wallet_name' => 'Imported Payout Wallet',
+                    'address' => $address,
+                    'mnemonic_encrypted' => $mnemonic_encrypted,
+                    'payment_skey_extended_encrypted' => UmbrellaMines_EncryptionHelper::encrypt($wallet['payment_skey_extended']),
+                    'payment_pkey' => $wallet['payment_pkey_hex'],
+                    'payment_keyhash' => $wallet['payment_keyhash'],
+                    'network' => $network,
+                    'is_active' => 1,
+                    'created_at' => current_time('mysql')
+                ),
+                array('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s')
+            );
+
+            if ($inserted) {
+                $message = 'Wallet imported successfully!';
+                if (!$found_match) {
+                    $message .= " ⚠️ Warning: Using custom derivation path $used_path (not found in database). Verify this is correct.";
+                }
+
+                wp_send_json_success(array(
+                    'message' => $message,
+                    'address' => $address,
+                    'network' => $network,
+                    'is_registered' => $is_registered,
+                    'derivation_path' => $used_path,
+                    'found_in_database' => $found_match
+                ));
+            } else {
+                error_log("Failed to insert payout wallet: " . $wpdb->last_error);
+                wp_send_json_error('Failed to save wallet to database: ' . $wpdb->last_error);
+            }
+
+        } catch (Exception $e) {
+            error_log("Error deriving wallet: " . $e->getMessage());
+            wp_send_json_error('Failed to derive wallet: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * AJAX: Clear/deactivate imported payout wallet
+     */
+    public function ajax_clear_imported_wallet() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        global $wpdb;
+        $payout_table = $wpdb->prefix . 'umbrella_mining_payout_wallet';
+
+        // Deactivate all imported wallets
+        $updated = $wpdb->query("UPDATE {$payout_table} SET is_active = 0 WHERE is_active = 1");
+
+        if ($updated !== false) {
+            error_log("=== CLEARED IMPORTED WALLET ===");
+            error_log("Deactivated $updated imported wallet(s)");
+            wp_send_json_success(array(
+                'message' => 'Imported wallet removed successfully',
+                'deactivated_count' => $updated
+            ));
+        } else {
+            error_log("Failed to clear imported wallet: " . $wpdb->last_error);
+            wp_send_json_error('Failed to deactivate imported wallet: ' . $wpdb->last_error);
         }
     }
 }

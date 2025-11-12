@@ -27,6 +27,7 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
         payment_pkey varchar(64) NOT NULL,
         payment_keyhash varchar(56) NOT NULL,
         network varchar(20) DEFAULT 'mainnet',
+        mnemonic_encrypted text,
         registration_signature text,
         registration_pubkey varchar(64),
         registered_at datetime,
@@ -53,6 +54,7 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
         submitted_at datetime,
         submission_status enum('pending','queued','submitted','confirmed','failed') DEFAULT 'pending',
         submission_error text,
+        mnemonic_encrypted text,
         PRIMARY KEY (id),
         KEY idx_status (submission_status),
         KEY idx_challenge (challenge_id),
@@ -188,6 +190,7 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
         solutions_consolidated int DEFAULT 0,
         status enum('pending','processing','success','failed') DEFAULT 'pending',
         error_message text,
+        mnemonic_encrypted text,
         merged_at datetime DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
         KEY idx_original (original_address),
@@ -209,6 +212,28 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
     dbDelta($sql_night_rates);
     dbDelta($sql_payout_wallet);
     dbDelta($sql_merges);
+
+    // EXPLICIT COLUMN ADDITIONS (dbDelta can miss these)
+    // Check and add mnemonic_encrypted to wallets table
+    $columns = $wpdb->get_results("SHOW COLUMNS FROM {$table_wallets} LIKE 'mnemonic_encrypted'");
+    if (empty($columns)) {
+        $wpdb->query("ALTER TABLE {$table_wallets} ADD COLUMN mnemonic_encrypted text AFTER network");
+        echo '<div class="notice notice-info"><p>✓ Added <code>mnemonic_encrypted</code> column to wallets table</p></div>';
+    }
+
+    // Check and add mnemonic_encrypted to solutions table
+    $columns = $wpdb->get_results("SHOW COLUMNS FROM {$table_solutions} LIKE 'mnemonic_encrypted'");
+    if (empty($columns)) {
+        $wpdb->query("ALTER TABLE {$table_solutions} ADD COLUMN mnemonic_encrypted text AFTER submission_error");
+        echo '<div class="notice notice-info"><p>✓ Added <code>mnemonic_encrypted</code> column to solutions table</p></div>';
+    }
+
+    // Check and add mnemonic_encrypted to merges table
+    $columns = $wpdb->get_results("SHOW COLUMNS FROM {$table_merges} LIKE 'mnemonic_encrypted'");
+    if (empty($columns)) {
+        $wpdb->query("ALTER TABLE {$table_merges} ADD COLUMN mnemonic_encrypted text AFTER error_message");
+        echo '<div class="notice notice-info"><p>✓ Added <code>mnemonic_encrypted</code> column to merges table</p></div>';
+    }
 
     // Set default config
     $defaults = array(
@@ -306,6 +331,19 @@ foreach ($table_names as $table) {
     <?php else: ?>
         <div class="notice notice-success" style="margin-top: 20px;">
             <p><strong>All tables exist!</strong> Your database is properly set up.</p>
+        </div>
+
+        <div class="card" style="max-width: 800px; margin-top: 20px;">
+            <h2>Update Table Schema</h2>
+            <p>Use this if you've updated the plugin and need to add new columns to existing tables.</p>
+            <p><strong>Note:</strong> This is safe to run and won't delete any existing data.</p>
+
+            <form method="post">
+                <?php wp_nonce_field('create_umbrella_tables', 'umbrella_nonce'); ?>
+                <button type="submit" name="create_tables" class="button button-secondary button-large">
+                    Force Update Schema
+                </button>
+            </form>
         </div>
     <?php endif; ?>
 

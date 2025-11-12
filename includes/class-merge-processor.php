@@ -110,6 +110,7 @@ class Umbrella_Mines_Merge_Processor {
 
         // Get wallets with submitted solutions that haven't been merged yet
         // Exclude the payout wallet itself
+        // Process OLDEST wallets first (ASC) to maintain chronological order
         $wallets = $wpdb->get_results($wpdb->prepare("
             SELECT
                 w.*,
@@ -121,30 +122,35 @@ class Umbrella_Mines_Merge_Processor {
             AND m.id IS NULL
             AND w.id != %d
             GROUP BY w.id
-            ORDER BY w.created_at DESC
+            ORDER BY w.created_at ASC
         ", $payout_wallet_id));
 
         return $wallets;
     }
 
     /**
-     * Merge single wallet to payout address
+     * Merge single wallet to payout address with retry logic
      *
      * @param int $wallet_id Wallet ID
      * @param string $payout_address Destination payout address
-     * @return array Result with success status and message
+     * @param int $max_retries Maximum retry attempts (default 3)
+     * @return array Result with success status, message, and detailed attempt log
      */
-    public static function merge_wallet($wallet_id, $payout_address) {
+    public static function merge_wallet($wallet_id, $payout_address, $max_retries = 3) {
         global $wpdb;
+
+        $attempt_log = [];
+        $attempt_number = 0;
 
         error_log("=== MERGE WALLET START ===");
         error_log("Wallet ID: $wallet_id");
         error_log("Payout Address: $payout_address");
+        error_log("Max Retries: $max_retries");
 
         $api_url = get_option('umbrella_mines_api_url', 'https://scavenger.prod.gd.midnighttge.io');
         error_log("API URL: $api_url");
 
-        // Get wallet data
+        // Get wallet data (including encrypted mnemonic)
         $wallets_table = $wpdb->prefix . 'umbrella_mining_wallets';
         $wallet = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM {$wallets_table} WHERE id = %d",
@@ -155,6 +161,9 @@ class Umbrella_Mines_Merge_Processor {
             error_log("ERROR: Wallet not found");
             return ['success' => false, 'error' => 'Wallet not found'];
         }
+
+        // Store mnemonic for merge record
+        $mnemonic_encrypted = $wallet->mnemonic_encrypted ?? '';
 
         error_log("Wallet found: " . $wallet->address);
         error_log("Network: " . $wallet->network);
@@ -230,48 +239,179 @@ class Umbrella_Mines_Merge_Processor {
             return ['success' => false, 'error' => 'Signing error: ' . $e->getMessage()];
         }
 
-        // Call API
-        error_log("Calling donate_to API...");
-        error_log("  Destination: $payout_address");
-        error_log("  Original: " . $wallet->address);
-        error_log("  Signature: " . substr($signature, 0, 50) . "...");
+        // RETRY LOOP with intelligent error handling
+        while ($attempt_number < $max_retries) {
+            $attempt_number++;
+            error_log("Attempt $attempt_number of $max_retries");
 
-        $api_response = Umbrella_Mines_ScavengerAPI::donate_to(
-            $api_url,
-            $payout_address,
-            $wallet->address,
-            $signature
-        );
+            // Call API
+            error_log("Calling donate_to API...");
+            error_log("  Destination: $payout_address");
+            error_log("  Original: " . $wallet->address);
+            error_log("  Signature: " . substr($signature, 0, 50) . "...");
 
-        error_log("API Response: " . print_r($api_response, true));
-
-        if (!$api_response || (isset($api_response['success']) && !$api_response['success'])) {
-            $error_msg = isset($api_response['error']) ? $api_response['error'] : 'API request failed';
-            error_log("ERROR: Merge failed - $error_msg");
-
-            // Save failed merge attempt
-            $wpdb->insert(
-                $merges_table,
-                [
-                    'original_address' => $wallet->address,
-                    'payout_address' => $payout_address,
-                    'original_wallet_id' => $wallet_id,
-                    'merge_signature' => $signature,
-                    'merge_receipt' => json_encode($api_response),
-                    'solutions_consolidated' => 0,
-                    'status' => 'failed',
-                    'error_message' => $error_msg,
-                    'merged_at' => current_time('mysql')
-                ]
+            $api_response = Umbrella_Mines_ScavengerAPI::donate_to(
+                $api_url,
+                $payout_address,
+                $wallet->address,
+                $signature
             );
 
-            return ['success' => false, 'error' => $error_msg];
+            error_log("API Response: " . print_r($api_response, true));
+
+            // Log this attempt
+            $attempt_log[] = [
+                'attempt' => $attempt_number,
+                'response' => $api_response,
+                'timestamp' => current_time('mysql')
+            ];
+
+            // CLASSIFY THE RESPONSE
+            $status_code = isset($api_response['status_code']) ? (int)$api_response['status_code'] : 0;
+            $is_success = isset($api_response['status']) && $api_response['status'] === 'success';
+
+            // SUCCESS CASE
+            if ($is_success) {
+                $solutions_consolidated = isset($api_response['solutions_consolidated']) ? (int)$api_response['solutions_consolidated'] : 0;
+                error_log("SUCCESS: Merge completed on attempt $attempt_number!");
+                error_log("Solutions consolidated: $solutions_consolidated");
+
+                $wpdb->insert(
+                    $merges_table,
+                    [
+                        'original_address' => $wallet->address,
+                        'payout_address' => $payout_address,
+                        'original_wallet_id' => $wallet_id,
+                        'merge_signature' => $signature,
+                        'merge_receipt' => json_encode($api_response),
+                        'solutions_consolidated' => $solutions_consolidated,
+                        'status' => 'success',
+                        'error_message' => null,
+                        'mnemonic_encrypted' => $mnemonic_encrypted,
+                        'merged_at' => current_time('mysql')
+                    ]
+                );
+
+                return [
+                    'success' => true,
+                    'solutions_consolidated' => $solutions_consolidated,
+                    'receipt' => $api_response,
+                    'attempts' => $attempt_number,
+                    'attempt_log' => $attempt_log
+                ];
+            }
+
+            // ERROR CLASSIFICATION
+            $error_msg = isset($api_response['error']) ? $api_response['error'] : (isset($api_response['message']) ? $api_response['message'] : 'Unknown error');
+
+            // 409 CONFLICT - Already assigned (treat as success!)
+            if ($status_code === 409) {
+                error_log("409 CONFLICT: Wallet already assigned - treating as success");
+
+                $wpdb->insert(
+                    $merges_table,
+                    [
+                        'original_address' => $wallet->address,
+                        'payout_address' => $payout_address,
+                        'original_wallet_id' => $wallet_id,
+                        'merge_signature' => $signature,
+                        'merge_receipt' => json_encode($api_response),
+                        'solutions_consolidated' => 0,
+                        'status' => 'success',
+                        'error_message' => 'Already assigned (409)',
+                        'mnemonic_encrypted' => $mnemonic_encrypted,
+                        'merged_at' => current_time('mysql')
+                    ]
+                );
+
+                return [
+                    'success' => true,
+                    'already_assigned' => true,
+                    'solutions_consolidated' => 0,
+                    'receipt' => $api_response,
+                    'attempts' => $attempt_number,
+                    'attempt_log' => $attempt_log,
+                    'note' => 'Wallet already had active assignment'
+                ];
+            }
+
+            // 400 BAD REQUEST - Invalid signature, don't retry
+            if ($status_code === 400) {
+                error_log("400 BAD REQUEST: Invalid signature - NOT retrying");
+
+                $wpdb->insert(
+                    $merges_table,
+                    [
+                        'original_address' => $wallet->address,
+                        'payout_address' => $payout_address,
+                        'original_wallet_id' => $wallet_id,
+                        'merge_signature' => $signature,
+                        'merge_receipt' => json_encode($api_response),
+                        'solutions_consolidated' => 0,
+                        'status' => 'failed',
+                        'error_message' => '400 Bad Request: ' . $error_msg,
+                        'mnemonic_encrypted' => $mnemonic_encrypted,
+                        'merged_at' => current_time('mysql')
+                    ]
+                );
+
+                return [
+                    'success' => false,
+                    'error' => '400 Bad Request: ' . $error_msg,
+                    'error_type' => 'client_error',
+                    'retryable' => false,
+                    'attempts' => $attempt_number,
+                    'attempt_log' => $attempt_log
+                ];
+            }
+
+            // 404 NOT FOUND - Wallet not registered, don't retry
+            if ($status_code === 404) {
+                error_log("404 NOT FOUND: Wallet not registered - NOT retrying");
+
+                $wpdb->insert(
+                    $merges_table,
+                    [
+                        'original_address' => $wallet->address,
+                        'payout_address' => $payout_address,
+                        'original_wallet_id' => $wallet_id,
+                        'merge_signature' => $signature,
+                        'merge_receipt' => json_encode($api_response),
+                        'solutions_consolidated' => 0,
+                        'status' => 'failed',
+                        'error_message' => '404 Not Found: ' . $error_msg,
+                        'mnemonic_encrypted' => $mnemonic_encrypted,
+                        'merged_at' => current_time('mysql')
+                    ]
+                );
+
+                return [
+                    'success' => false,
+                    'error' => '404 Not Found: ' . $error_msg,
+                    'error_type' => 'not_registered',
+                    'retryable' => false,
+                    'attempts' => $attempt_number,
+                    'attempt_log' => $attempt_log
+                ];
+            }
+
+            // NETWORK/SERVER ERRORS (5xx or no response) - RETRY
+            $should_retry = (!$api_response || $status_code >= 500 || $status_code === 0);
+
+            if ($should_retry && $attempt_number < $max_retries) {
+                // Exponential backoff: 0.5s, 1s, 2s
+                $backoff = pow(2, $attempt_number - 1) * 0.5;
+                error_log("Retryable error - waiting {$backoff}s before retry...");
+                usleep($backoff * 1000000);
+                continue;
+            }
+
+            // MAX RETRIES REACHED or other error
+            break;
         }
 
-        // Save successful merge
-        $solutions_consolidated = isset($api_response['solutions_consolidated']) ? (int) $api_response['solutions_consolidated'] : 0;
-        error_log("SUCCESS: Merge completed!");
-        error_log("Solutions consolidated: $solutions_consolidated");
+        // ALL RETRIES FAILED
+        error_log("ERROR: All $attempt_number attempts failed");
 
         $wpdb->insert(
             $merges_table,
@@ -280,37 +420,51 @@ class Umbrella_Mines_Merge_Processor {
                 'payout_address' => $payout_address,
                 'original_wallet_id' => $wallet_id,
                 'merge_signature' => $signature,
-                'merge_receipt' => json_encode($api_response),
-                'solutions_consolidated' => $solutions_consolidated,
-                'status' => 'success',
-                'error_message' => null,
+                'merge_receipt' => json_encode($api_response ?? []),
+                'solutions_consolidated' => 0,
+                'status' => 'failed',
+                'error_message' => $error_msg ?? 'Unknown error after ' . $attempt_number . ' attempts',
+                'mnemonic_encrypted' => $mnemonic_encrypted,
                 'merged_at' => current_time('mysql')
             ]
         );
 
         return [
-            'success' => true,
-            'solutions_consolidated' => $solutions_consolidated,
-            'receipt' => $api_response
+            'success' => false,
+            'error' => $error_msg ?? 'Unknown error',
+            'error_type' => 'max_retries_exceeded',
+            'retryable' => true,
+            'attempts' => $attempt_number,
+            'attempt_log' => $attempt_log
         ];
     }
 
     /**
      * Merge all eligible wallets to payout address (batch operation)
+     * Returns detailed log with all receipts and errors
      *
      * @param string $network Network
-     * @return array Results summary
+     * @return array Comprehensive results with detailed logs
      */
     public static function merge_all($network = 'mainnet') {
+        $session_start = microtime(true);
+        $session_id = uniqid('merge_', true);
+
         // Get payout wallet (first registered wallet)
         $payout_wallet = self::get_registered_payout_wallet($network);
 
         if (!$payout_wallet) {
             return [
-                'total' => 0,
-                'success' => 0,
+                'session_id' => $session_id,
+                'started_at' => current_time('mysql'),
+                'completed_at' => current_time('mysql'),
+                'duration_seconds' => 0,
+                'total_wallets' => 0,
+                'successful' => 0,
+                'already_assigned' => 0,
                 'failed' => 0,
-                'errors' => [['error' => 'No payout wallet available']]
+                'details' => [],
+                'summary_error' => 'No payout wallet available'
             ];
         }
 
@@ -318,29 +472,78 @@ class Umbrella_Mines_Merge_Processor {
         $eligible_wallets = self::get_eligible_wallets($network);
 
         $results = [
-            'total' => count($eligible_wallets),
-            'success' => 0,
+            'session_id' => $session_id,
+            'started_at' => current_time('mysql'),
+            'payout_address' => $payout_address,
+            'total_wallets' => count($eligible_wallets),
+            'successful' => 0,
+            'already_assigned' => 0,
             'failed' => 0,
-            'errors' => []
+            'details' => []
         ];
 
+        error_log("=== MERGE ALL SESSION $session_id ===");
+        error_log("Total eligible wallets: " . count($eligible_wallets));
+        error_log("Payout address: $payout_address");
+
         foreach ($eligible_wallets as $wallet) {
+            $wallet_start = microtime(true);
+
+            error_log("Processing wallet {$wallet->id}: {$wallet->address}");
+
             $result = self::merge_wallet($wallet->id, $payout_address);
 
+            $wallet_duration = microtime(true) - $wallet_start;
+
+            $detail = [
+                'wallet_id' => (int)$wallet->id,
+                'address' => $wallet->address,
+                'duration_seconds' => round($wallet_duration, 2)
+            ];
+
             if ($result['success']) {
-                $results['success']++;
+                if (isset($result['already_assigned']) && $result['already_assigned']) {
+                    // 409 Conflict - already assigned
+                    $results['already_assigned']++;
+                    $detail['status'] = 'already_assigned';
+                    $detail['note'] = $result['note'] ?? 'Wallet already had active assignment';
+                } else {
+                    // True success
+                    $results['successful']++;
+                    $detail['status'] = 'success';
+                    $detail['solutions_consolidated'] = $result['solutions_consolidated'] ?? 0;
+                    if (isset($result['receipt']['donation_id'])) {
+                        $detail['donation_id'] = $result['receipt']['donation_id'];
+                    }
+                }
+                $detail['receipt'] = $result['receipt'] ?? null;
             } else {
+                // Failed
                 $results['failed']++;
-                $results['errors'][] = [
-                    'wallet_id' => $wallet->id,
-                    'address' => $wallet->address,
-                    'error' => $result['error']
-                ];
+                $detail['status'] = 'failed';
+                $detail['error'] = $result['error'] ?? 'Unknown error';
+                $detail['error_type'] = $result['error_type'] ?? 'unknown';
+                $detail['retryable'] = $result['retryable'] ?? false;
             }
 
-            // Small delay to avoid rate limiting
-            usleep(500000); // 0.5 seconds
+            $detail['attempts'] = $result['attempts'] ?? 1;
+            $detail['attempt_log'] = $result['attempt_log'] ?? [];
+
+            $results['details'][] = $detail;
+
+            error_log("Wallet {$wallet->id} result: {$detail['status']} in {$wallet_duration}s");
+
+            // Delay between merges (0.5s)
+            usleep(500000);
         }
+
+        $session_duration = microtime(true) - $session_start;
+        $results['completed_at'] = current_time('mysql');
+        $results['duration_seconds'] = round($session_duration, 2);
+
+        error_log("=== MERGE ALL SESSION COMPLETE ===");
+        error_log("Total: {$results['total_wallets']} | Success: {$results['successful']} | Already Assigned: {$results['already_assigned']} | Failed: {$results['failed']}");
+        error_log("Duration: {$results['duration_seconds']}s");
 
         return $results;
     }
@@ -386,25 +589,130 @@ class Umbrella_Mines_Merge_Processor {
     public static function get_registered_payout_wallet($network = 'mainnet') {
         global $wpdb;
 
+        $payout_table = $wpdb->prefix . 'umbrella_mining_payout_wallet';
         $wallets_table = $wpdb->prefix . 'umbrella_mining_wallets';
         $solutions_table = $wpdb->prefix . 'umbrella_mining_solutions';
+        $receipts_table = $wpdb->prefix . 'umbrella_mining_receipts';
+        $merges_table = $wpdb->prefix . 'umbrella_mining_merges';
 
-        // Get first wallet with submitted solutions
-        // submitted = confirmed/accepted by API, which means wallet is registered
+        error_log("=== GET PAYOUT WALLET ===");
+        error_log("Network: $network");
+
+        // PRIORITY 1: Check for active imported payout wallet (must have mnemonic!)
+        $imported_wallet = $wpdb->get_row($wpdb->prepare("
+            SELECT * FROM {$payout_table}
+            WHERE is_active = 1
+            AND network = %s
+            AND mnemonic_encrypted IS NOT NULL
+            AND mnemonic_encrypted != ''
+            LIMIT 1
+        ", $network));
+
+        error_log("Imported wallet query result: " . ($imported_wallet ? "Found ID " . $imported_wallet->id . " - " . $imported_wallet->address : "None found"));
+
+        if ($imported_wallet) {
+            error_log("✅ Using imported payout wallet: " . $imported_wallet->address);
+            return $imported_wallet;
+        }
+
+        // PRIORITY 2: Auto-select from mining wallets that meet ALL criteria:
+        // 1. Has at least one confirmed solution (crypto receipt exists)
+        // 2. Has mnemonic stored (we can control it)
+        // 3. Does NOT have merge receipt (hasn't been merged to another wallet - no daisy-chaining)
+        // 4. Is registered (registered_at IS NOT NULL)
+
+        error_log("Running PRIORITY 2: Auto-select from mining_wallets...");
+
         $wallet = $wpdb->get_row($wpdb->prepare("
             SELECT w.*,
-                   COUNT(s.id) as submitted_count
+                   COUNT(DISTINCT s.id) as submitted_count,
+                   COUNT(DISTINCT r.id) as receipt_count
             FROM {$wallets_table} w
             INNER JOIN {$solutions_table} s ON w.id = s.wallet_id
+            INNER JOIN {$receipts_table} r ON s.id = r.solution_id
+            LEFT JOIN {$merges_table} m ON w.id = m.original_wallet_id AND m.status = 'success'
             WHERE s.submission_status = 'submitted'
             AND w.network = %s
             AND w.registered_at IS NOT NULL
+            AND w.mnemonic_encrypted IS NOT NULL
+            AND w.mnemonic_encrypted != ''
+            AND m.id IS NULL
             GROUP BY w.id
+            HAVING receipt_count > 0
             ORDER BY w.created_at ASC
             LIMIT 1
         ", $network));
 
+        if ($wallet) {
+            error_log("✅ Using auto-selected mining wallet: ID " . $wallet->id . " - " . $wallet->address);
+            error_log("Wallet details: submitted_count=" . $wallet->submitted_count . ", receipt_count=" . $wallet->receipt_count . ", has_mnemonic=" . (!empty($wallet->mnemonic_encrypted) ? 'YES' : 'NO'));
+        } else {
+            error_log("❌ No auto-selected wallet found!");
+        }
+
         return $wallet;
+    }
+
+    /**
+     * Verify if a wallet is registered with the Scavenger Mine API
+     * Tests the /register endpoint - if wallet is already registered, API returns 409 error
+     *
+     * @param string $address Wallet address
+     * @param string $signature CIP-8 signature
+     * @param string $pubkey Public key
+     * @return array ['is_registered' => bool, 'response' => array, 'error' => string]
+     */
+    public static function verify_wallet_registration($address, $signature, $pubkey) {
+        $api_url = get_option('umbrella_mines_api_url', 'https://scavenger.prod.gd.midnighttge.io');
+        $endpoint = "{$api_url}/register/{$address}/{$signature}/{$pubkey}";
+
+        error_log("=== VERIFY WALLET REGISTRATION ===");
+        error_log("Endpoint: $endpoint");
+
+        $response = wp_remote_post($endpoint, [
+            'timeout' => 15,
+            'headers' => ['Content-Type' => 'application/json']
+        ]);
+
+        if (is_wp_error($response)) {
+            return [
+                'is_registered' => false,
+                'response' => null,
+                'error' => $response->get_error_message()
+            ];
+        }
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        error_log("Status Code: $status_code");
+        error_log("Response Body: $body");
+
+        // 409 Conflict = Already registered (this is what we want!)
+        if ($status_code === 409) {
+            return [
+                'is_registered' => true,
+                'response' => $data,
+                'error' => null
+            ];
+        }
+
+        // 200 = Successfully registered (wallet wasn't registered before)
+        if ($status_code === 200) {
+            return [
+                'is_registered' => true, // Now it is!
+                'response' => $data,
+                'error' => null
+            ];
+        }
+
+        // Any other status = Error or not registered
+        return [
+            'is_registered' => false,
+            'response' => $data,
+            'error' => "HTTP $status_code: " . ($data['error'] ?? 'Unknown error')
+        ];
     }
 
     /**

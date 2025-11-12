@@ -26,6 +26,19 @@ if (isset($_GET['submit_now']) && isset($_GET['_wpnonce'])) {
     ", $solution_id));
 
     if ($solution) {
+        // IMMEDIATELY set status to "queued" before API call
+        // This ensures status is updated even if user navigates away during submission
+        $wpdb->update(
+            $wpdb->prefix . 'umbrella_mining_solutions',
+            array(
+                'submission_status' => 'queued',
+                'submission_error' => null
+            ),
+            array('id' => $solution_id),
+            array('%s', '%s'),
+            array('%d')
+        );
+
         // Submit to API
         $url = "https://scavenger.prod.gd.midnighttge.io/solution/{$solution->address}/{$solution->challenge_id}/{$solution->nonce}";
 
@@ -41,6 +54,17 @@ if (isset($_GET['submit_now']) && isset($_GET['_wpnonce'])) {
 
         if (is_wp_error($response)) {
             $error = $response->get_error_message();
+            // Update status to failed with error
+            $wpdb->update(
+                $wpdb->prefix . 'umbrella_mining_solutions',
+                array(
+                    'submission_status' => 'failed',
+                    'submission_error' => 'Network error: ' . $error
+                ),
+                array('id' => $solution_id),
+                array('%s', '%s'),
+                array('%d')
+            );
             echo '<div class="notice notice-error"><p><strong>Submission Failed:</strong> ' . esc_html($error) . '</p></div>';
         } else {
             $status_code = wp_remote_retrieve_response_code($response);
@@ -80,21 +104,25 @@ if (isset($_GET['submit_now']) && isset($_GET['_wpnonce'])) {
 
                 echo '<div class="notice notice-success"><p><strong>SUCCESS!</strong> Solution submitted and accepted by API!</p><pre>' . esc_html($body) . '</pre></div>';
 
-                // Redirect to clear URL params and prevent re-submission on refresh
-                echo '<script>setTimeout(function(){ window.location.href = "?page=umbrella-mines-solutions"; }, 2000);</script>';
+                // Redirect immediately to show updated status
+                echo '<script>window.location.href = "?page=umbrella-mines-solutions";</script>';
             } else {
-                // Failed
+                // API rejected (4xx, 5xx errors)
+                $error_message = "HTTP {$status_code}: " . $body;
                 $wpdb->update(
                     $wpdb->prefix . 'umbrella_mining_solutions',
                     array(
                         'submission_status' => 'failed',
-                        'submission_error' => $body
+                        'submission_error' => $error_message
                     ),
                     array('id' => $solution_id),
                     array('%s', '%s'),
                     array('%d')
                 );
                 echo '<div class="notice notice-error"><p><strong>API Rejected (HTTP ' . $status_code . '):</strong></p><pre>' . esc_html($body) . '</pre></div>';
+
+                // Redirect after showing error
+                echo '<script>setTimeout(function(){ window.location.href = "?page=umbrella-mines-solutions"; }, 3000);</script>';
             }
         }
     }
@@ -102,10 +130,14 @@ if (isset($_GET['submit_now']) && isset($_GET['_wpnonce'])) {
 
 global $wpdb;
 
-// Check if payout wallet exists
-require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-payout-wallet.php';
+// Check if payout wallet exists (using new merge processor logic)
+require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
 $network = get_option('umbrella_mines_network', 'mainnet');
-$payout_wallet = Umbrella_Mines_Payout_Wallet::get_active_wallet($network);
+$payout_wallet = Umbrella_Mines_Merge_Processor::get_registered_payout_wallet($network);
+
+// Get ALL payout wallet addresses (current + historical) for protection
+$payout_table = $wpdb->prefix . 'umbrella_mining_payout_wallet';
+$all_payout_addresses = $wpdb->get_col("SELECT address FROM {$payout_table}");
 
 // Pagination
 $per_page = 50;
@@ -116,16 +148,34 @@ $offset = ($current_page - 1) * $per_page;
 $status_filter = isset($_GET['status']) ? sanitize_text_field($_GET['status']) : '';
 $where = $status_filter ? $wpdb->prepare("WHERE s.submission_status = %s", $status_filter) : '';
 
-// Get solutions (with receipt check to prevent accidental reset)
+// Get solutions (with receipt check to prevent accidental reset, and merge status to lock merge button)
 $solutions = $wpdb->get_results("
-    SELECT s.*, w.address, w.derivation_path, r.id as receipt_id
+    SELECT s.*, w.address, w.derivation_path, r.id as receipt_id, m.id as merge_id, m.status as merge_status
     FROM {$wpdb->prefix}umbrella_mining_solutions s
     JOIN {$wpdb->prefix}umbrella_mining_wallets w ON s.wallet_id = w.id
     LEFT JOIN {$wpdb->prefix}umbrella_mining_receipts r ON s.id = r.solution_id
+    LEFT JOIN {$wpdb->prefix}umbrella_mining_merges m ON s.wallet_id = m.original_wallet_id AND m.status = 'success'
     {$where}
     ORDER BY s.found_at DESC
     LIMIT {$per_page} OFFSET {$offset}
 ");
+
+// AUTO-CORRECTION: Receipt exists = SUCCESS (source of truth)
+// If a solution has a receipt but wrong status, fix it automatically
+foreach ($solutions as $solution) {
+    if ($solution->receipt_id && !in_array($solution->submission_status, array('submitted', 'confirmed'))) {
+        // Receipt exists but status is wrong (queued/failed/pending) - auto-correct!
+        $wpdb->update(
+            $wpdb->prefix . 'umbrella_mining_solutions',
+            array('submission_status' => 'submitted', 'submitted_at' => current_time('mysql')),
+            array('id' => $solution->id),
+            array('%s', '%s'),
+            array('%d')
+        );
+        // Update the object so the display is correct immediately
+        $solution->submission_status = 'submitted';
+    }
+}
 
 // Get total count
 $total = $wpdb->get_var("
@@ -186,7 +236,11 @@ $status_counts = $wpdb->get_results("
         </thead>
         <tbody>
             <?php foreach ($solutions as $solution): ?>
-            <tr>
+            <?php
+                // Check if this wallet IS a payout wallet (current OR historical)
+                $is_payout_wallet = in_array($solution->address, $all_payout_addresses);
+            ?>
+            <tr <?php if ($is_payout_wallet) echo 'style="background: rgba(100, 100, 100, 0.15); opacity: 0.6;"'; ?>>
                 <td><?php echo esc_html($solution->id); ?></td>
                 <td><?php echo esc_html(date('Y-m-d H:i:s', strtotime($solution->found_at))); ?></td>
                 <td><code style="font-size: 10px;"><?php echo esc_html($solution->address); ?></code></td>
@@ -215,15 +269,23 @@ $status_counts = $wpdb->get_results("
                     ?>
                 </td>
                 <td>
+                    <?php if ($is_payout_wallet): ?>
+                        <div style="padding: 6px 12px; background: rgba(128, 128, 128, 0.3); border: 1px solid #666; border-radius: 4px; color: #999; font-weight: 600; font-size: 11px; letter-spacing: 0.5px; text-align: center;">
+                            💰 PAYOUT WALLET - DO NOT MERGE
+                        </div>
+                    <?php else: ?>
                     <div style="display: flex; gap: 8px; align-items: center;">
                         <a href="#" class="button button-small view-solution" data-id="<?php echo $solution->id; ?>">View</a>
                         <?php if (in_array($solution->submission_status, array('pending', 'failed', '', null))): ?>
                             <a href="?page=umbrella-mines-solutions&submit_now=<?php echo $solution->id; ?>&_wpnonce=<?php echo wp_create_nonce('submit_solution_' . $solution->id); ?>" class="button button-small button-primary">Submit</a>
                         <?php endif; ?>
-                        <?php /* MERGE DISABLED - donate_to endpoint not yet live
-                        if ($payout_wallet && $solution->submission_status === 'submitted'): ?>
-                            <a href="#" class="button button-small merge-wallet-btn" data-wallet-id="<?php echo $solution->wallet_id; ?>" data-address="<?php echo esc_attr($solution->address); ?>" style="background: #00ff41; color: #000; border: none;">Merge</a>
-                        <?php endif; */ ?>
+                        <?php if ($payout_wallet && $solution->submission_status === 'submitted'): ?>
+                            <?php if (!$solution->merge_id): ?>
+                                <a href="#" class="button button-small merge-wallet-btn" data-wallet-id="<?php echo $solution->wallet_id; ?>" data-address="<?php echo esc_attr($solution->address); ?>" style="background: #00ff41; color: #000; border: none;">Merge</a>
+                            <?php else: ?>
+                                <span class="button button-small" style="opacity: 0.5; cursor: not-allowed; background: rgba(0, 255, 65, 0.2); color: #00ff41; border: 1px solid #00ff41;" title="Wallet already merged">✅ Merged</span>
+                            <?php endif; ?>
+                        <?php endif; ?>
                         <?php if (!$solution->receipt_id): ?>
                             <a href="#" class="button button-small reset-status" data-id="<?php echo $solution->id; ?>">Reset</a>
                         <?php else: ?>
@@ -231,6 +293,7 @@ $status_counts = $wpdb->get_results("
                         <?php endif; ?>
                         <a href="#" class="button button-small delete-solution" data-id="<?php echo $solution->id; ?>" style="color: #dc3232;">Delete</a>
                     </div>
+                    <?php endif; ?>
                 </td>
             </tr>
             <?php endforeach; ?>
@@ -481,7 +544,6 @@ jQuery(document).ready(function($) {
         });
     });
 
-    /* MERGE DISABLED - donate_to endpoint not yet live
     // Merge wallet button
     $('.merge-wallet-btn').on('click', function(e) {
         e.preventDefault();
@@ -521,7 +583,6 @@ jQuery(document).ready(function($) {
             }
         });
     });
-    */
 });
 
 // Add rotation animation for loading spinner

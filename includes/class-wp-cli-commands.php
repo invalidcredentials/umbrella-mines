@@ -143,7 +143,7 @@ class Umbrella_Mines_CLI_Commands {
                 $registered = $this->register_wallet($wallet, $api_url);
                 $reg_time = microtime(true) - $reg_start;
 
-                if (!$registered) {
+                if (!$registered || !isset($registered['success'])) {
                     WP_CLI::warning("  ✗ Registration failed after " . number_format($reg_time, 2) . "s");
                     WP_CLI::warning("  Check logs for details. Retrying in 15 seconds...");
                     sleep(15);
@@ -151,6 +151,8 @@ class Umbrella_Mines_CLI_Commands {
                 }
 
                 WP_CLI::success("  ✓ Wallet registered in " . number_format($reg_time, 2) . "s!");
+                WP_CLI::line("    Signature: " . substr($registered['signature'], 0, 50) . "...");
+                WP_CLI::line("    Pubkey: " . $registered['pubkey']);
 
                 // Save wallet to database
                 $wallet_id = $this->save_wallet($wallet, $registered);
@@ -415,16 +417,24 @@ class Umbrella_Mines_CLI_Commands {
         );
 
         // Register with API
-        // CRITICAL: Must use 'pubkey' (short form kL), NOT 'pubkey_bytes' (derived Ed25519 public key)!
-        // The comment above was WRONG - this was the bug preventing registration!
+        // CRITICAL: Must use 'pubkey' (Ed25519 public key - 64 hex chars = 32 bytes)
         $result = Umbrella_Mines_ScavengerAPI::register_address(
             $api_url,
             $wallet['address'],
             $signature['signature'],
-            $signature['pubkey']  // Use short form kL (64 hex chars)
+            $signature['pubkey']
         );
 
-        return $result;
+        // Return both the API result AND the signature data for saving
+        if ($result) {
+            return [
+                'success' => true,
+                'signature' => $signature['signature'],
+                'pubkey' => $signature['pubkey']
+            ];
+        }
+
+        return false;
     }
 
     /**
@@ -432,6 +442,13 @@ class Umbrella_Mines_CLI_Commands {
      */
     private function save_wallet($wallet, $registration) {
         global $wpdb;
+
+        // Encrypt mnemonic before saving
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/UmbrellaMines_EncryptionHelper.php';
+        $mnemonic_encrypted = '';
+        if (isset($wallet['mnemonic']) && !empty($wallet['mnemonic'])) {
+            $mnemonic_encrypted = UmbrellaMines_EncryptionHelper::encrypt($wallet['mnemonic']);
+        }
 
         $wpdb->insert(
             $wpdb->prefix . 'umbrella_mining_wallets',
@@ -442,11 +459,12 @@ class Umbrella_Mines_CLI_Commands {
                 'payment_pkey' => $wallet['payment_pkey'],
                 'payment_keyhash' => $wallet['payment_keyhash'],
                 'network' => $wallet['network'],
+                'mnemonic_encrypted' => $mnemonic_encrypted,
                 'registration_signature' => $registration['signature'] ?? null,
                 'registration_pubkey' => $registration['pubkey'] ?? null,
                 'registered_at' => current_time('mysql')
             ),
-            array('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
+            array('%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
         );
 
         $wallet_id = $wpdb->insert_id;
@@ -566,6 +584,13 @@ class Umbrella_Mines_CLI_Commands {
     private function save_solution($wallet_id, $challenge, $solution) {
         global $wpdb;
 
+        // Get encrypted mnemonic from wallet
+        $wallet_data = $wpdb->get_row($wpdb->prepare(
+            "SELECT mnemonic_encrypted FROM {$wpdb->prefix}umbrella_mining_wallets WHERE id = %d",
+            $wallet_id
+        ));
+        $mnemonic_encrypted = $wallet_data->mnemonic_encrypted ?? '';
+
         $wpdb->insert(
             $wpdb->prefix . 'umbrella_mining_solutions',
             array(
@@ -578,9 +603,10 @@ class Umbrella_Mines_CLI_Commands {
                 'no_pre_mine' => $challenge['no_pre_mine'],
                 'no_pre_mine_hour' => $challenge['no_pre_mine_hour'],
                 'latest_submission' => $challenge['latest_submission'],
-                'submission_status' => 'pending'
+                'submission_status' => 'pending',
+                'mnemonic_encrypted' => $mnemonic_encrypted
             ),
-            array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
+            array('%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s')
         );
 
         $solution_id = $wpdb->insert_id;

@@ -145,6 +145,65 @@ class CardanoWalletPHP
         ];
     }
 
+    /**
+     * Derive wallet from EXISTING mnemonic with CUSTOM derivation path
+     * Use this to import wallets from other platforms (Eternl, Nami, etc.)
+     *
+     * @param string $mnemonic Existing 24-word recovery phrase
+     * @param int $account_idx Account index (default 0)
+     * @param int $chain_idx Chain index (0=external, 1=internal, 2=stake)
+     * @param int $address_idx Address index (default 0)
+     * @param string $passphrase Optional passphrase
+     * @param string $network 'mainnet' or 'preprod'
+     * @return array Wallet data
+     */
+    public static function fromMnemonicWithPath(
+        string $mnemonic,
+        int $account_idx = 0,
+        int $chain_idx = 0,
+        int $address_idx = 0,
+        string $passphrase = '',
+        string $network = 'preprod'
+    ): array {
+        self::checkRequirements();
+
+        // Derive root from PROVIDED mnemonic
+        $root = self::deriveRootKeyIcarusFromMnemonic($mnemonic, $passphrase);
+
+        // CIP-1852 path: m/1852'/1815'/{account}'
+        $purpose = self::deriveChild($root, 1852, true);
+        $coin = self::deriveChild($purpose, 1815, true);
+        $account = self::deriveChild($coin, $account_idx, true);
+
+        // Payment path: m/.../chain/address_idx
+        $pay_chain = self::deriveChild($account, $chain_idx, false);
+        $pay_key = self::deriveChild($pay_chain, $address_idx, false);
+
+        // Stake always uses chain=2, address=0
+        $stake_chain = self::deriveChild($account, 2, false);
+        $stake_key = self::deriveChild($stake_chain, 0, false);
+
+        // Build addresses
+        $addresses = self::buildAddresses($pay_key['public_key'], $stake_key['public_key'], $network);
+
+        return [
+            'success' => true,
+            'derivation_path' => "m/1852'/1815'/$account_idx'/$chain_idx/$address_idx",
+            'root' => $root,
+            'account' => $account,
+            'payment' => $pay_key,
+            'stake' => $stake_key,
+            'addresses' => $addresses,
+            'payment_skey_hex' => bin2hex($pay_key['kL']),
+            'payment_skey_extended' => bin2hex($pay_key['kL'] . $pay_key['kR']),
+            'payment_pkey_hex' => bin2hex($pay_key['public_key']),
+            'payment_keyhash' => self::blake2b224_hex($pay_key['public_key']),
+            'stake_skey_hex' => bin2hex($stake_key['kL']),
+            'stake_skey_extended' => bin2hex($stake_key['kL'] . $stake_key['kR']),
+            'stake_keyhash' => self::blake2b224_hex($stake_key['public_key']),
+        ];
+    }
+
     // ---- Root (Icarus) -----------------------------------------------------
 
     private static function deriveRootKeyIcarusFromMnemonic(string $mnemonic, string $passphrase = ''): array

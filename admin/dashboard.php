@@ -408,6 +408,17 @@ $active_processes = $wpdb->get_results("
     font-size: 16px;
 }
 
+#start-single {
+    background: #7c3aed !important;
+    border-color: #6d28d9 !important;
+    color: white !important;
+}
+
+#start-single:hover {
+    background: #6d28d9 !important;
+    border-color: #5b21b6 !important;
+}
+
 .button-danger {
     background: #dc3545;
     border-color: #dc3545;

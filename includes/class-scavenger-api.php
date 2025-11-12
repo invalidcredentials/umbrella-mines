@@ -305,4 +305,67 @@ class Umbrella_Mines_ScavengerAPI {
         $body = wp_remote_retrieve_body($response);
         return json_decode($body, true);
     }
+
+    /**
+     * Merge rewards to payout address (donate_to endpoint)
+     *
+     * @param string $api_url API base URL
+     * @param string $destination_address Payout address to receive merged rewards
+     * @param string $original_address Mining wallet address to merge from
+     * @param string $signature CIP-8 signature (hex) - signed by original_address
+     * @return array|false API response or false on failure
+     */
+    public static function donate_to($api_url, $destination_address, $original_address, $signature) {
+        // API format: POST /donate_to/{destination_address}/{original_address}/{signature}
+        // Message signed: "Assign accumulated Scavenger rights to: " + destination_address
+
+        $log_prefix = "[MERGE]";
+
+        // Use the CORRECT whitepaper method: signature in URL path
+        $url = sprintf('%s/donate_to/%s/%s/%s', $api_url, $destination_address, $original_address, $signature);
+
+        error_log("$log_prefix Full URL (length): " . strlen($url));
+        error_log("$log_prefix Destination: " . $destination_address);
+        error_log("$log_prefix Original: " . $original_address);
+        error_log("$log_prefix Signature (first 50): " . substr($signature, 0, 50) . "...");
+        error_log("$log_prefix Signature (length): " . strlen($signature));
+
+        $response = wp_remote_post($url, array(
+            'timeout' => 60,
+            'sslverify' => false,
+            'headers' => array(
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode(array())
+        ));
+
+        if (is_wp_error($response)) {
+            $msg = "Merge request failed: " . $response->get_error_message();
+            error_log("$log_prefix ERROR: $msg");
+            return false;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        error_log("$log_prefix HTTP $code");
+        error_log("$log_prefix Response: " . $body);
+
+        // Check for success
+        if ($code === 200 && $data && isset($data['status']) && $data['status'] === 'success') {
+            error_log("$log_prefix SUCCESS: Merged {$original_address} → {$destination_address}");
+            return $data;
+        }
+
+        // Handle errors
+        $error_msg = isset($data['message']) ? $data['message'] : 'Unknown error';
+        error_log("$log_prefix FAILED: $error_msg");
+
+        return [
+            'success' => false,
+            'error' => $error_msg,
+            'status_code' => $code
+        ];
+    }
 }

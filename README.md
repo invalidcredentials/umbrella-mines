@@ -1,6 +1,6 @@
 # UMBRELLA MINES $NIGHT MINER
 
-![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)
+![Version](https://img.shields.io/badge/version-0.4.20-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
 ![PHP](https://img.shields.io/badge/PHP-8.3.17-777BB4.svg)
 
@@ -105,6 +105,43 @@ Toggle auto-submission to automatically send found solutions to the Midnight Sca
 - Color-matched export buttons to green theme
 - Styled warning modals for better user experience
 - Consistent cyberpunk aesthetic across all pages
+
+### Merge Address Management (NEW in v0.4.20)
+Complete reward consolidation system for merging mining outputs from multiple wallets into a single payout address.
+
+- Merge statistics dashboard with real-time wallet counts and eligibility status
+- Bulk merge all eligible wallets in one operation
+- Recent merge history showing last 10 operations with status and timestamps
+- Export all merged wallet data for auditing and record-keeping
+- Anti-daisy-chain protection enforces Midnight rules (wallets used as payout cannot be re-merged)
+- CIP-8 signed merge transactions with crypto receipt proofs
+
+### Custom Wallet Import (NEW in v0.4.20)
+Import existing Cardano wallets from other platforms (Eternl, Nami, Typhon) for use as payout addresses.
+
+- Paste 24-word mnemonic from any BIP39-compatible wallet
+- Optional custom derivation path (account/chain/address format)
+- Automatic path detection scans common paths (0/0/0 through 0/0/9)
+- Registration verification with Midnight Scavenger Mine API
+- Smart fallback to user-provided path with warning if not found in database
+- Encrypted mnemonic storage for secure wallet recovery
+
+### Encrypted Wallet Storage (NEW in v0.4.20)
+All sensitive wallet data encrypted before database storage.
+
+- 24-word mnemonic recovery phrases encrypted at-rest
+- Extended private keys encrypted using symmetric encryption
+- Database breach does not expose plaintext mnemonics
+- Full wallet recovery capability from encrypted exports
+- Enables secure merge transaction signing from stored payout wallet
+
+### Auto Wallet Selection (NEW in v0.4.20)
+Intelligent payout wallet selection for merge operations.
+
+- Priority system: imported payout wallet first, then auto-selected mining wallet
+- Automatic detection of best payout candidate
+- Status indicators show active payout wallet
+- Prevents merge errors from missing payout configuration
 
 ### Smart Start/Stop Controls
 Graceful process management with real-time status updates. Stop mining instantly with proper cleanup - no orphaned processes.
@@ -265,6 +302,7 @@ umbrella-mines/
 │   ├── solutions.php               # Solutions management
 │   ├── wallets.php                 # Wallet management
 │   ├── manual-submit.php           # Manual solution submission
+│   ├── merge-addresses.php         # Merge address management (NEW v0.4.20)
 │   ├── create-table.php            # Database initialization
 │   └── admin-styles.php            # Shared admin styles
 │
@@ -272,12 +310,15 @@ umbrella-mines/
 │   ├── class-wp-cli-commands.php   # WP-CLI mining engine
 │   ├── class-ashmaize-ffi.php      # FFI wrapper for Rust hasher
 │   ├── class-scavenger-api.php     # Midnight API client
+│   ├── class-merge-processor.php   # Merge operation handler (NEW v0.4.20)
+│   ├── class-payout-wallet.php     # Payout wallet management (NEW v0.4.20)
 │   ├── start-stop-handler.php      # Process management
 │   └── vendor/                     # Cardano crypto libraries
 │       ├── CardanoWalletPHP.php    # HD wallet generation (BIP39/BIP32)
 │       ├── CardanoCIP8Signer.php   # CIP-8 message signing
 │       ├── Ed25519Compat.php       # Ed25519 crypto compatibility
 │       ├── Ed25519Pure.php         # Pure PHP Ed25519 implementation
+│       ├── UmbrellaMines_EncryptionHelper.php  # Encryption utilities (NEW v0.4.20)
 │       └── bip39-wordlist.php      # BIP39 mnemonic wordlist
 │
 ├── bin/
@@ -807,6 +848,24 @@ A: Check:
 
 **Q: Can I customize the hashing algorithm?**
 A: The AshMaize algorithm is fixed (required by Midnight challenge). You could potentially swap the FFI DLL for different hash functions, but that wouldn't be compatible with Midnight Scavenger Mine.
+
+**Q: How does the merge address system work?**
+A: The merge system consolidates mining rewards from multiple wallets into a single payout address. You generate or import a payout wallet, then merge eligible mining wallets to it. Each merge requires a cryptographic signature proving wallet ownership. The API returns a receipt as proof of consolidation. Once merged, wallets are locked from re-merging to prevent daisy-chaining.
+
+**Q: Can I import my existing Cardano wallet?**
+A: Yes. Go to Merge Addresses page and toggle "Import Your Own Payout Wallet". Paste your 24-word mnemonic from Eternl, Nami, Typhon, or any BIP39-compatible wallet. The system automatically detects the derivation path or you can specify it manually. Your mnemonic is encrypted before storage.
+
+**Q: What is daisy-chaining and why is it blocked?**
+A: Daisy-chaining is merging Wallet A to B, then merging B to C, then C to D in a chain. Midnight rules prohibit this. Once a wallet is used as a payout destination, it cannot be merged again. You can still merge multiple wallets TO the same payout wallet (A->C, B->C is fine), but C can never be merged elsewhere.
+
+**Q: Is my imported mnemonic safe in the database?**
+A: Mnemonics are encrypted using symmetric encryption before database storage. A database breach would not expose plaintext recovery phrases. However, WordPress database security best practices still apply (strong passwords, encrypted connections). Consider database-at-rest encryption for production deployments.
+
+**Q: Can I use a hardware wallet address for payouts?**
+A: You can import the mnemonic from a hardware wallet seed to use as payout address. However, merge operations require signing, which means the private key must be available to sign merge messages. If you need hardware wallet security, generate the payout wallet in the plugin, then transfer rewards to your hardware wallet address after consolidation.
+
+**Q: What happens if a merge fails?**
+A: Failed merges are logged in the merge history with error messages. The original wallet remains eligible for retry. Common failures include unregistered wallets, API timeouts, or invalid signatures. Check the merge history table for specific error details and retry after resolving the issue.
 
 ---
 

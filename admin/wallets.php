@@ -14,12 +14,17 @@ $per_page = 50;
 $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
 $offset = ($current_page - 1) * $per_page;
 
-// Get wallets
+// Get wallets with merge status
 $wallets = $wpdb->get_results("
     SELECT w.*,
            (SELECT COUNT(*) FROM {$wpdb->prefix}umbrella_mining_solutions WHERE wallet_id = w.id) as solution_count,
-           (SELECT COUNT(*) FROM {$wpdb->prefix}umbrella_mining_solutions WHERE wallet_id = w.id AND submission_status = 'confirmed') as confirmed_count
+           (SELECT COUNT(*) FROM {$wpdb->prefix}umbrella_mining_solutions WHERE wallet_id = w.id AND submission_status = 'confirmed') as confirmed_count,
+           m.id as merge_id,
+           m.status as merge_status,
+           m.payout_address as merge_payout_address,
+           m.merged_at as merge_merged_at
     FROM {$wpdb->prefix}umbrella_mining_wallets w
+    LEFT JOIN {$wpdb->prefix}umbrella_mining_merges m ON w.id = m.original_wallet_id AND m.status = 'success'
     ORDER BY w.created_at DESC
     LIMIT {$per_page} OFFSET {$offset}
 ");
@@ -56,6 +61,7 @@ $registered_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}umbrella
                 <th style="width: 100px;">Network</th>
                 <th style="width: 100px;">Registered</th>
                 <th style="width: 100px;">Solutions</th>
+                <th style="width: 100px;">Merge Status</th>
                 <th style="width: 80px;">Actions</th>
             </tr>
         </thead>
@@ -77,6 +83,14 @@ $registered_count = $wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}umbrella
                     <?php echo number_format($wallet->solution_count); ?> total
                     <?php if ($wallet->confirmed_count > 0): ?>
                         <br><strong style="color: #00ff41;"><?php echo number_format($wallet->confirmed_count); ?> confirmed</strong>
+                    <?php endif; ?>
+                </td>
+                <td>
+                    <?php if ($wallet->merge_id): ?>
+                        <span style="display: inline-block; padding: 4px 8px; background: rgba(0, 255, 65, 0.2); color: #00ff41; border: 1px solid #00ff41; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase;">✅ Merged</span>
+                        <br><span style="color: #666; font-size: 10px;"><?php echo date('Y-m-d H:i', strtotime($wallet->merge_merged_at)); ?></span>
+                    <?php else: ?>
+                        <span style="color: #666;">-</span>
                     <?php endif; ?>
                 </td>
                 <td>

@@ -15,21 +15,14 @@ require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
 // Get current network
 $network = get_option('umbrella_mines_network', 'mainnet');
 
-// Get wallet with the correct payout address
-global $wpdb;
-$correct_payout_address = 'addr1qyxzax7ncz2gmdsl3jrcpjtdceqfjuhgjprn2fpjsx5hhqkjm5fmh9vdhzn5k2uemdjjdehe67tljygwx2zp329eh46s33jlqa';
-$payout_wallet = $wpdb->get_row($wpdb->prepare(
-    "SELECT * FROM {$wpdb->prefix}umbrella_mining_wallets WHERE address = %s",
-    $correct_payout_address
-));
+// Get dynamically selected payout wallet (must have: receipt, mnemonic, not merged, registered)
+$payout_wallet = Umbrella_Mines_Merge_Processor::get_registered_payout_wallet($network);
 
-// Fallback to ID 5 if not found
-if (!$payout_wallet) {
-    $payout_wallet = $wpdb->get_row("SELECT * FROM {$wpdb->prefix}umbrella_mining_wallets WHERE id = 5");
-    // Override with correct address
-    if ($payout_wallet) {
-        $payout_wallet->address = $correct_payout_address;
-    }
+// Check if this is an imported wallet (from payout_wallet table) vs auto-selected (from mining_wallets table)
+$is_imported_wallet = false;
+if ($payout_wallet) {
+    // If it has wallet_name field, it's from payout_wallet table (imported)
+    $is_imported_wallet = property_exists($payout_wallet, 'wallet_name');
 }
 
 // Get merge statistics
@@ -568,9 +561,191 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         color: #00ff41;
         text-decoration: none;
     }
+
+    /* Toggle Switch */
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 50px;
+        height: 26px;
+    }
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #333;
+        transition: .3s;
+        border-radius: 26px;
+    }
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 4px;
+        bottom: 4px;
+        background-color: white;
+        transition: .3s;
+        border-radius: 50%;
+    }
+    .toggle-switch input:checked + .toggle-slider {
+        background-color: #00d4ff;
+    }
+    .toggle-switch input:checked + .toggle-slider:before {
+        transform: translateX(24px);
+    }
+
+    /* Import Wallet Styling */
+    #import-mnemonic:focus {
+        outline: none;
+        border-color: #00d4ff;
+        box-shadow: 0 0 20px rgba(0, 212, 255, 0.4), inset 0 2px 8px rgba(0, 0, 0, 0.5);
+    }
+    #import-wallet-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0, 212, 255, 0.5);
+    }
+    #import-wallet-btn:active {
+        transform: translateY(0);
+    }
+    #import-wallet-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none !important;
+    }
     </style>
 
     <script>
+    // Toggle import wallet section
+    jQuery(document).ready(function($) {
+        $('#import-wallet-toggle').on('change', function() {
+            $('#import-wallet-section').slideToggle(300);
+        });
+
+        // Import wallet button
+        $('#import-wallet-btn').on('click', function() {
+            const mnemonic = $('#import-mnemonic').val().trim();
+            const derivationPath = $('#import-derivation-path').val().trim() || '0/0/0';
+
+            if (!mnemonic) {
+                $('#import-status').html('<span style="color: #ff0000;">❌ Please enter your mnemonic phrase</span>');
+                return;
+            }
+
+            // Basic validation: 24 words
+            const words = mnemonic.split(/\s+/).filter(w => w.length > 0);
+            if (words.length !== 24) {
+                $('#import-status').html('<span style="color: #ff0000;">❌ Must be exactly 24 words (found ' + words.length + ')</span>');
+                return;
+            }
+
+            // Validate derivation path format
+            if (!/^\d+\/\d+\/\d+$/.test(derivationPath)) {
+                $('#import-status').html('<span style="color: #ff0000;">❌ Invalid derivation path format. Use: 0/0/0</span>');
+                return;
+            }
+
+            $('#import-wallet-btn').prop('disabled', true);
+            $('#import-status').html('<span style="color: #ffaa00;">⏳ Deriving wallet and verifying registration...</span>');
+
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'umbrella_import_payout_wallet',
+                    nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>',
+                    mnemonic: mnemonic,
+                    derivation_path: derivationPath
+                },
+                success: function(response) {
+                    $('#import-wallet-btn').prop('disabled', false);
+
+                    if (response.success) {
+                        $('#import-status').html('<span style="color: #00ff41; text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);">✅ ' + response.data.message + '</span>');
+
+                        var warningHtml = '';
+                        if (!response.data.found_in_database) {
+                            warningHtml = '<div style="margin-top: 12px; padding: 10px; background: rgba(255, 170, 0, 0.15); border-left: 3px solid #ffaa00; font-size: 12px; color: #ffaa00;">' +
+                                '<strong>⚠️ Warning:</strong> Using custom derivation path (not found in database). Please verify this is correct.' +
+                                '</div>';
+                        }
+
+                        $('#import-result').html(
+                            '<div style="background: rgba(0, 255, 65, 0.1); border: 2px solid #00ff41; border-left: 4px solid #00ff41; color: #fff; padding: 16px; box-shadow: 0 0 20px rgba(0, 255, 65, 0.2); word-wrap: break-word; overflow-wrap: break-word;">' +
+                            '<div style="font-size: 16px; margin-bottom: 12px; color: #00ff41; font-weight: 600;">🎉 Wallet Imported Successfully!</div>' +
+                            '<div style="font-family: monospace; font-size: 13px; line-height: 1.8;">' +
+                            '<div><strong style="color: #00ff41;">Address:</strong> <span style="color: #fff; word-break: break-all;">' + response.data.address + '</span></div>' +
+                            '<div><strong style="color: #00ff41;">Derivation Path:</strong> <span style="color: #fff;">m/1852\'/1815\'/' + response.data.derivation_path + '</span>' + (response.data.found_in_database ? ' <span style="color: #00ff41;">✓ Found in DB</span>' : '') + '</div>' +
+                            '<div><strong style="color: #00ff41;">Network:</strong> <span style="color: #fff;">' + response.data.network + '</span></div>' +
+                            '<div><strong style="color: #00ff41;">Registration:</strong> <span style="color: ' + (response.data.is_registered ? '#00ff41' : '#ffaa00') + ';">' + (response.data.is_registered ? '✅ Already Registered' : '⚠️ Not Registered Yet') + '</span></div>' +
+                            '</div>' +
+                            warningHtml +
+                            '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(0, 255, 65, 0.2); font-size: 12px; color: #aaa;">Reloading page...</div>' +
+                            '</div>'
+                        ).fadeIn();
+
+                        // Reload page after 2 seconds to show new payout wallet
+                        setTimeout(function() {
+                            location.reload();
+                        }, 2000);
+                    } else {
+                        $('#import-status').html('<span style="color: #ff4444; text-shadow: 0 0 10px rgba(255, 68, 68, 0.5);">❌ Import Failed</span>');
+                        $('#import-result').html(
+                            '<div style="background: rgba(255, 68, 68, 0.1); border: 2px solid #ff4444; border-left: 4px solid #ff4444; color: #fff; padding: 16px; box-shadow: 0 0 20px rgba(255, 68, 68, 0.2); word-wrap: break-word; overflow-wrap: break-word;">' +
+                            '<div style="font-size: 16px; margin-bottom: 8px; color: #ff4444; font-weight: 600;">⚠️ Import Error</div>' +
+                            '<div style="color: #ffaaaa; font-size: 14px; word-break: break-word;">' + response.data + '</div>' +
+                            '</div>'
+                        ).fadeIn();
+                    }
+                },
+                error: function() {
+                    $('#import-wallet-btn').prop('disabled', false);
+                    $('#import-status').html('<span style="color: #ff0000;">❌ Network error</span>');
+                }
+            });
+        });
+
+        // Clear imported wallet button
+        $('#clear-imported-wallet-btn').on('click', function() {
+            if (!confirm('Remove imported wallet and return to auto-select mode?')) {
+                return;
+            }
+
+            const btn = $(this);
+            btn.prop('disabled', true).html('⏳ Removing...');
+
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'umbrella_clear_imported_wallet',
+                    nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        alert('✅ Imported wallet removed! Reloading...');
+                        location.reload();
+                    } else {
+                        alert('❌ Error: ' + response.data);
+                        btn.prop('disabled', false).html('❌ Remove Imported Wallet');
+                    }
+                },
+                error: function() {
+                    alert('❌ Network error');
+                    btn.prop('disabled', false).html('❌ Remove Imported Wallet');
+                }
+            });
+        });
+    });
+
     // Copy to clipboard
     function copyToClipboard(text, button) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -649,17 +824,116 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
 
             if (response.success) {
                 const data = response.data;
-                alert('✅ Merge Complete!\n\n' +
-                    'Total Processed: ' + data.total + '\n' +
-                    'Success: ' + data.success + '\n' +
-                    'Failed: ' + data.failed);
+                let message = '✅ Merge Complete!\n\n' +
+                    'Total Processed: ' + data.total_wallets + '\n' +
+                    'Successful: ' + data.successful + '\n';
+
+                if (data.already_assigned > 0) {
+                    message += 'Already Assigned: ' + data.already_assigned + '\n';
+                }
+
+                if (data.failed > 0) {
+                    message += 'Failed: ' + data.failed + '\n';
+                }
+
+                message += '\nDuration: ' + data.duration_seconds + 's';
+
+                alert(message);
                 location.reload();
             } else {
                 alert('❌ Merge failed: ' + response.data);
             }
         });
     }
+
+    // Export all merged wallets
+    function exportAllMerged() {
+        const btn = document.getElementById('export-merged-btn');
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Exporting...';
+
+        // Create a form and submit it to trigger download
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = ajaxurl + '?action=umbrella_export_all_merged';
+
+        const nonceField = document.createElement('input');
+        nonceField.type = 'hidden';
+        nonceField.name = 'nonce';
+        nonceField.value = '<?php echo wp_create_nonce('umbrella_mining'); ?>';
+        form.appendChild(nonceField);
+
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+
+        setTimeout(function() {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }, 2000);
+    }
+
+    // View merge details modal
+    jQuery(document).ready(function($) {
+        $('.view-merge').on('click', function(e) {
+            e.preventDefault();
+            const mergeId = $(this).data('merge-id');
+
+            // Show modal
+            $('#merge-modal').fadeIn(200);
+            $('#merge-modal-content').html('<div style="padding: 40px; text-align: center; color: #666;"><div style="font-size: 24px; margin-bottom: 16px;">⏳</div><div>Loading merge details...</div></div>');
+
+            // Load merge details
+            $.ajax({
+                url: ajaxurl,
+                method: 'POST',
+                data: {
+                    action: 'get_merge_details',
+                    merge_id: mergeId
+                },
+                success: function(html) {
+                    $('#merge-modal-content').html(html);
+                },
+                error: function() {
+                    $('#merge-modal-content').html('<div style="padding: 40px; text-align: center; color: #dc3232;">Failed to load merge details</div>');
+                }
+            });
+        });
+
+        // Close modal
+        $('.merge-modal-close, #merge-modal-overlay').on('click', function() {
+            $('#merge-modal').fadeOut(200);
+        });
+
+        // Close button hover effect
+        $('.merge-modal-close').hover(
+            function() { $(this).css('opacity', '1'); },
+            function() { $(this).css('opacity', '0.6'); }
+        );
+
+        // ESC key to close modal
+        $(document).on('keydown', function(e) {
+            if (e.key === 'Escape' && $('#merge-modal').is(':visible')) {
+                $('#merge-modal').fadeOut(200);
+            }
+        });
+    });
     </script>
+
+    <!-- Merge Details Modal -->
+    <div id="merge-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 999999;">
+        <div id="merge-modal-overlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(4px);"></div>
+        <div style="position: relative; width: 90%; max-width: 1000px; margin: 40px auto; background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); max-height: calc(100vh - 80px); overflow-y: auto; border: 1px solid #2a3f5f;">
+            <div style="position: sticky; top: 0; background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%); border-bottom: 1px solid #2a3f5f; padding: 20px 25px; z-index: 10; display: flex; justify-content: space-between; align-items: center; border-radius: 12px 12px 0 0;">
+                <h2 style="margin: 0; color: #00ff41; font-size: 18px; text-transform: uppercase; letter-spacing: 2px;">🔀 Merge Details</h2>
+                <button class="merge-modal-close" style="background: none; border: none; color: #fff; font-size: 28px; cursor: pointer; padding: 0; line-height: 1; opacity: 0.6; transition: opacity 0.3s;">&times;</button>
+            </div>
+            <div id="merge-modal-content" style="padding: 25px;">
+                <!-- Content loaded via AJAX -->
+            </div>
+        </div>
+    </div>
 
     <div class="page-header">
         <h1>
@@ -686,11 +960,103 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
     <?php endif; ?>
 
     <?php if ($payout_wallet): ?>
-        <!-- Payout Wallet Active (Using Registered Mining Wallet) -->
-        <div class="info-box" style="margin-bottom: 20px;">
-            <div class="info-box-title">ℹ️ Payout Wallet Selected</div>
+        <!-- Payout Wallet Active -->
+        <div class="info-box" style="margin-bottom: 20px; position: relative;">
+            <div class="info-box-title">
+                <?php if ($is_imported_wallet): ?>
+                    🔑 Using Imported Payout Wallet
+                <?php else: ?>
+                    ℹ️ Payout Wallet Selected
+                <?php endif; ?>
+            </div>
             <div class="info-box-content">
-                Using your first registered mining wallet as the payout destination. All other mining wallets will merge their rewards to this address. This wallet is already registered with the Scavenger Mine API.
+                <?php if ($is_imported_wallet): ?>
+                    <div style="margin-bottom: 16px;">
+                        Using your <strong style="color: #00d4ff;">imported wallet</strong> as the payout destination. All mining wallets will merge their rewards to this address.
+                    </div>
+                    <button type="button" id="clear-imported-wallet-btn" class="button" style="
+                        background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
+                        color: #fff;
+                        border: none;
+                        padding: 8px 18px;
+                        font-weight: 600;
+                        border-radius: 6px;
+                        box-shadow: 0 2px 10px rgba(255, 68, 68, 0.3);
+                        transition: all 0.3s;
+                        cursor: pointer;
+                        font-size: 13px;
+                    ">
+                        <span style="display: inline-flex; align-items: center; gap: 6px;">
+                            <span>🗑️</span>
+                            <span>Remove Imported Wallet</span>
+                        </span>
+                    </button>
+                <?php else: ?>
+                    Using your first registered mining wallet as the payout destination. All other mining wallets will merge their rewards to this address. This wallet is already registered with the Scavenger Mine API.
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- Import Custom Payout Wallet Toggle -->
+        <div class="card" style="margin-bottom: 20px; border-left: 4px solid #00d4ff; background: rgba(0, 212, 255, 0.03); box-shadow: 0 0 20px rgba(0, 212, 255, 0.1);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <div>
+                    <h3 style="margin: 0 0 4px 0; color: #00d4ff; font-size: 18px; letter-spacing: 0.5px; text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);">
+                        🔑 Import Your Own Payout Wallet
+                    </h3>
+                    <p style="margin: 0; font-size: 12px; color: #666; font-style: italic;">
+                        Use a wallet from Eternl, Nami, or other platforms
+                    </p>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="import-wallet-toggle">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div id="import-wallet-section" style="display: none; margin-top: 24px; padding-top: 20px; border-top: 1px solid rgba(0, 212, 255, 0.2);">
+                <div style="background: rgba(0, 212, 255, 0.05); border: 1px dashed rgba(0, 212, 255, 0.3); padding: 16px; border-radius: 6px; margin-bottom: 20px;">
+                    <div style="display: flex; align-items: start; gap: 12px;">
+                        <div style="font-size: 24px; flex-shrink: 0;">💡</div>
+                        <div style="color: #aaa; font-size: 13px; line-height: 1.6;">
+                            <strong style="color: #00d4ff; display: block; margin-bottom: 4px;">What This Does:</strong>
+                            Import an existing wallet from another platform to use as your payout destination. Your mnemonic will be encrypted and stored securely. This wallet will receive all merged rewards.
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #00ff41; font-size: 14px; letter-spacing: 0.5px; text-transform: uppercase;">
+                        24-Word Mnemonic Phrase
+                    </label>
+                    <textarea id="import-mnemonic" rows="4" style="width: 100%; padding: 14px; background: #0a0a0a; border: 2px solid #333; color: #fff; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 6px; transition: all 0.3s; box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);" placeholder="word1 word2 word3 word4 word5 word6 word7 word8 ... word24"></textarea>
+                    <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #ffaa00; margin-top: 8px; background: rgba(255, 170, 0, 0.1); padding: 8px 12px; border-radius: 4px; border-left: 3px solid #ffaa00;">
+                        <span style="font-size: 16px;">🔒</span>
+                        <span>Your mnemonic will be encrypted with AES-256 and stored securely in the database</span>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 10px; font-weight: 600; color: #00d4ff; font-size: 14px; letter-spacing: 0.5px; text-transform: uppercase;">
+                        Derivation Path (Optional)
+                    </label>
+                    <input type="text" id="import-derivation-path" value="0/0/0" style="width: 200px; padding: 10px 14px; background: #0a0a0a; border: 2px solid #333; color: #fff; font-family: 'Courier New', monospace; font-size: 14px; border-radius: 6px; transition: all 0.3s;" placeholder="0/0/0">
+                    <div style="font-size: 12px; color: #666; margin-top: 6px;">
+                        Format: <code style="color: #00d4ff;">account/chain/address</code> (e.g., 0/0/1 for second address). Leave as 0/0/0 if unsure.
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                    <button type="button" id="import-wallet-btn" class="button button-primary" style="background: linear-gradient(135deg, #00d4ff 0%, #00a8cc 100%); color: #000; border: none; padding: 10px 24px; font-weight: 600; border-radius: 6px; box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3); transition: all 0.3s; cursor: pointer;">
+                        <span style="display: inline-flex; align-items: center; gap: 8px;">
+                            <span>🔍</span>
+                            <span>Import & Verify</span>
+                        </span>
+                    </button>
+                    <span id="import-status" style="font-size: 14px; font-weight: 500;"></span>
+                </div>
+
+                <div id="import-result" style="display: none; margin-top: 20px; padding: 16px; border-radius: 6px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);"></div>
             </div>
         </div>
 
@@ -740,6 +1106,11 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                     🚀 Merge All Eligible (<?php echo $stats['eligible_wallets']; ?>)
                 </button>
             <?php endif; ?>
+            <?php if ($stats['merged_wallets'] > 0): ?>
+                <button type="button" id="export-merged-btn" class="button" onclick="exportAllMerged()" style="background: #00d4ff; color: #000; border: none;">
+                    <span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Export All Merged (<?php echo $stats['merged_wallets']; ?>)
+                </button>
+            <?php endif; ?>
         </div>
 
         <?php if (!empty($stats['merge_history'])): ?>
@@ -751,6 +1122,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         <th>Solutions</th>
                         <th>Status</th>
                         <th>Time</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -764,6 +1136,9 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                                 </span>
                             </td>
                             <td><?php echo human_time_diff(strtotime($merge->merged_at), current_time('timestamp')); ?> ago</td>
+                            <td>
+                                <a href="#" class="button button-small view-merge" data-merge-id="<?php echo $merge->id; ?>">View</a>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -811,42 +1186,4 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
             </div>
         </div>
     <?php endif; ?>
-
-    <!-- Coming Soon Overlay -->
-    <div class="coming-soon-overlay" id="coming-soon-overlay">
-        <div class="coming-soon-content" style="position: relative;">
-            <div class="coming-soon-close" onclick="document.getElementById('coming-soon-overlay').style.display='none'">×</div>
-
-            <div class="coming-soon-badge">Coming Soon</div>
-
-            <h2 class="coming-soon-title">Wallet Merge</h2>
-
-            <div class="coming-soon-info">
-                <div class="coming-soon-info-title">
-                    <span>⚠️</span>
-                    <span>API Endpoint Not Yet Active</span>
-                </div>
-                <p>The Scavenger Mine <strong>donate_to</strong> endpoint is currently offline. Once Midnight activates this endpoint, wallet merging will go live immediately.</p>
-
-                <p><strong>What is Wallet Merge?</strong><br>
-                Consolidate all your mining rewards from <strong>any Scavenger Mine implementation</strong> into a single Cardano address. Whether you're using Umbrella Mines, the official CLI miner, or any other tool - merge everything together with cryptographic signatures proving ownership.</p>
-
-                <p style="margin-bottom: 0;"><strong>No more wallet sprawl.</strong> One destination address. All your rewards. Simple.</p>
-            </div>
-
-            <div class="coming-soon-tagline">
-                <span class="umbrella-float">☂</span>
-                <span class="tagline-text">Umbrella Mines: We've Got You Covered</span>
-            </div>
-
-            <div class="coming-soon-buttons">
-                <a href="<?php echo admin_url('admin.php?page=umbrella-mines'); ?>" class="coming-soon-btn">
-                    ← Back to Dashboard
-                </a>
-                <button onclick="document.getElementById('coming-soon-overlay').style.display='none'" class="coming-soon-btn">
-                    View Page Anyway
-                </button>
-            </div>
-        </div>
-    </div>
 </div>
