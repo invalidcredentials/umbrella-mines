@@ -235,6 +235,13 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
         echo '<div class="notice notice-info"><p>✓ Added <code>mnemonic_encrypted</code> column to merges table</p></div>';
     }
 
+    // Check and add used_as_payout to wallets table (anti-daisy-chain protection)
+    $columns = $wpdb->get_results("SHOW COLUMNS FROM {$table_wallets} LIKE 'used_as_payout'");
+    if (empty($columns)) {
+        $wpdb->query("ALTER TABLE {$table_wallets} ADD COLUMN used_as_payout tinyint(1) DEFAULT 0 AFTER mnemonic_encrypted");
+        echo '<div class="notice notice-info"><p>✓ Added <code>used_as_payout</code> column to wallets table (anti-daisy-chain protection)</p></div>';
+    }
+
     // Set default config
     $defaults = array(
         'api_url' => 'https://scavenger.prod.gd.midnighttge.io',

@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.4.1
+ * Version: 0.4.20
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
