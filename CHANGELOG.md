@@ -5,6 +5,52 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.6] - 2025-11-12
+
+### Added
+
+#### BCMath Extension Requirement Documentation
+- **README Requirements Update** - Added BCMath PHP extension to requirements with installation instructions
+- **Version-Specific Install Commands** - Documented need to install bcmath for Apache's PHP version (e.g., `php8.2-bcmath`)
+- **CLI vs Apache PHP Note** - Clarified that CLI and Apache may use different PHP versions requiring separate installs
+
+#### Database Schema Validation
+- **Column Status Checker** - Create Tables page now validates critical columns added in v0.4.20
+- **Visual Status Indicators** - Green checkmarks for existing columns, red X for missing
+- **Mnemonic Field Validation** - Checks `mnemonic_encrypted` columns in wallets, solutions, payout_wallet, and merges tables
+- **Anti-Daisy-Chain Validation** - Verifies `used_as_payout` flag exists in wallets table
+- **Migration Guidance** - Clear instructions to run "Force Update Schema" if columns missing
+
+#### Merge Page Troubleshooting System
+- **Collapsible Troubleshooting Guide** - Expandable section under "How It Works" with comprehensive debugging steps
+- **Requirement Checklist** - Lists all 4 requirements: v0.4.20+ wallet, registration, receipts, BCMath extension
+- **Quick Diagnostic Steps** - Database checks, wallet mnemonic verification, BCMath installation, clean reinstall instructions
+- **Always-Accessible Import** - Import wallet form available even when no payout wallet exists
+- **AJAX-Based Import** - Smooth import experience with status messages and automatic page reload on success
+
+### Fixed
+- **Payout Wallet Grey-Out** - Auto-selected wallets from mining_wallets table now properly greyed out on Solutions page
+- **Import Form Handler** - Changed from POST to AJAX to prevent page refresh issues
+- **Emoji Text Overlap** - Fixed "Start Mining First" text overlapping merge icon with proper line-height
+- **Dashboard Link** - Corrected "Go to Mining" button to properly link to Dashboard page
+
+### Technical Details
+
+**Files Modified:**
+- `umbrella-mines.php` - Version bump to 0.4.20.6
+- `README.md` - BCMath requirement documentation
+- `admin/solutions.php` - Grey-out logic for auto-selected payout wallets
+- `admin/create-table.php` - Column validation UI
+- `admin/merge-addresses.php` - Troubleshooting guide and import form improvements
+
+**User Experience Improvements:**
+- Users stuck on "No Registered Wallet" screen now have clear troubleshooting path
+- Database schema issues can be diagnosed without SSH access
+- Import functionality accessible regardless of payout wallet state
+- Better error messages guide users to solutions
+
+---
+
 ## [0.4.20] - 2025-11-12
 
 ### Added

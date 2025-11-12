@@ -292,6 +292,27 @@ foreach ($table_names as $table) {
     $existing_tables[$table] = ($exists !== null);
 }
 
+// Check critical columns (added in updates)
+$critical_columns = array();
+if ($existing_tables['umbrella_mining_wallets']) {
+    $wallets_table = $wpdb->prefix . 'umbrella_mining_wallets';
+    $critical_columns['wallets_mnemonic'] = $wpdb->get_var("SHOW COLUMNS FROM {$wallets_table} LIKE 'mnemonic_encrypted'") !== null;
+    $critical_columns['wallets_used_as_payout'] = $wpdb->get_var("SHOW COLUMNS FROM {$wallets_table} LIKE 'used_as_payout'") !== null;
+}
+if ($existing_tables['umbrella_mining_solutions']) {
+    $solutions_table = $wpdb->prefix . 'umbrella_mining_solutions';
+    $critical_columns['solutions_mnemonic'] = $wpdb->get_var("SHOW COLUMNS FROM {$solutions_table} LIKE 'mnemonic_encrypted'") !== null;
+}
+if ($existing_tables['umbrella_mining_payout_wallet']) {
+    $payout_table = $wpdb->prefix . 'umbrella_mining_payout_wallet';
+    $critical_columns['payout_mnemonic'] = $wpdb->get_var("SHOW COLUMNS FROM {$payout_table} LIKE 'mnemonic_encrypted'") !== null;
+    $critical_columns['payout_skey_encrypted'] = $wpdb->get_var("SHOW COLUMNS FROM {$payout_table} LIKE 'payment_skey_extended_encrypted'") !== null;
+}
+if ($existing_tables['umbrella_mining_merges']) {
+    $merges_table = $wpdb->prefix . 'umbrella_mining_merges';
+    $critical_columns['merges_mnemonic'] = $wpdb->get_var("SHOW COLUMNS FROM {$merges_table} LIKE 'mnemonic_encrypted'") !== null;
+}
+
 ?>
 
 <div class="wrap">
@@ -322,6 +343,86 @@ foreach ($table_names as $table) {
             </tbody>
         </table>
     </div>
+
+    <?php if (!empty($critical_columns)): ?>
+    <div class="card" style="max-width: 800px; margin-top: 20px;">
+        <h2>Critical Columns Status</h2>
+        <p>These columns were added in plugin updates and are required for merge functionality:</p>
+        <table class="widefat striped">
+            <thead>
+                <tr>
+                    <th>Column</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>umbrella_mining_wallets.mnemonic_encrypted</code></td>
+                    <td>
+                        <?php if (isset($critical_columns['wallets_mnemonic']) && $critical_columns['wallets_mnemonic']): ?>
+                            <span style="color: green;">✓ Exists</span>
+                        <?php else: ?>
+                            <span style="color: red;">✗ Missing</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>umbrella_mining_wallets.used_as_payout</code></td>
+                    <td>
+                        <?php if (isset($critical_columns['wallets_used_as_payout']) && $critical_columns['wallets_used_as_payout']): ?>
+                            <span style="color: green;">✓ Exists</span>
+                        <?php else: ?>
+                            <span style="color: red;">✗ Missing</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>umbrella_mining_solutions.mnemonic_encrypted</code></td>
+                    <td>
+                        <?php if (isset($critical_columns['solutions_mnemonic']) && $critical_columns['solutions_mnemonic']): ?>
+                            <span style="color: green;">✓ Exists</span>
+                        <?php else: ?>
+                            <span style="color: red;">✗ Missing</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>umbrella_mining_payout_wallet.mnemonic_encrypted</code></td>
+                    <td>
+                        <?php if (isset($critical_columns['payout_mnemonic']) && $critical_columns['payout_mnemonic']): ?>
+                            <span style="color: green;">✓ Exists</span>
+                        <?php else: ?>
+                            <span style="color: red;">✗ Missing</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>umbrella_mining_payout_wallet.payment_skey_extended_encrypted</code></td>
+                    <td>
+                        <?php if (isset($critical_columns['payout_skey_encrypted']) && $critical_columns['payout_skey_encrypted']): ?>
+                            <span style="color: green;">✓ Exists</span>
+                        <?php else: ?>
+                            <span style="color: red;">✗ Missing</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>umbrella_mining_merges.mnemonic_encrypted</code></td>
+                    <td>
+                        <?php if (isset($critical_columns['merges_mnemonic']) && $critical_columns['merges_mnemonic']): ?>
+                            <span style="color: green;">✓ Exists</span>
+                        <?php else: ?>
+                            <span style="color: red;">✗ Missing</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <?php if (in_array(false, $critical_columns, true)): ?>
+            <p style="margin-top: 15px;"><strong style="color: #dc3232;">⚠️ Some columns are missing.</strong> Click "Force Update Schema" below to add them.</p>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
 
     <?php if (in_array(false, $existing_tables)): ?>
         <div class="card" style="max-width: 800px; margin-top: 20px;">

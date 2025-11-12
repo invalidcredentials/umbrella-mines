@@ -1173,16 +1173,120 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         <li>Your first wallet with submitted solutions becomes the payout wallet</li>
                         <li>All other mining wallets can merge their rewards to this address</li>
                     </ol>
+
+                    <details style="margin-top: 20px; padding: 15px; background: rgba(255, 193, 7, 0.1); border-left: 3px solid #ffc107; border-radius: 4px;">
+                        <summary style="cursor: pointer; font-weight: bold; color: #ffc107; margin-bottom: 10px;">⚠️ Still not seeing the merge interface? Troubleshoot here</summary>
+                        <div style="color: #ccc; line-height: 1.8; margin-top: 10px;">
+                            <p style="margin: 0 0 10px 0; font-weight: bold;">The merge page requires ALL of these:</p>
+                            <ol style="margin: 0 0 15px 0; padding-left: 20px;">
+                                <li>Wallet created with v0.4.20+ (has mnemonic stored)</li>
+                                <li>Wallet registered with Scavenger Mine API</li>
+                                <li>At least one submitted solution with crypto receipt</li>
+                                <li>BCMath PHP extension installed on your server</li>
+                            </ol>
+
+                            <p style="margin: 15px 0 10px 0; font-weight: bold;">Quick Checks:</p>
+                            <ol style="margin: 0; padding-left: 20px; color: #999;">
+                                <li><strong style="color: #e0e0e0;">Check Database:</strong> Go to <a href="<?php echo admin_url('admin.php?page=umbrella-mines-create-table'); ?>" style="color: #00ff41;">Create Table</a> page - ensure all 11 tables exist and critical columns show green checkmarks</li>
+                                <li><strong style="color: #e0e0e0;">Check Wallet Mnemonic:</strong> Export a wallet and verify <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px;">mnemonic</code> field is not empty</li>
+                                <li><strong style="color: #e0e0e0;">Check BCMath:</strong> SSH into server and run: <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px;">sudo apt-get install php-bcmath && sudo systemctl restart apache2</code></li>
+                                <li><strong style="color: #e0e0e0;">Clean Reinstall:</strong> If tables/columns are missing, deactivate plugin, click "Force Update Schema" on Create Table page, then reactivate plugin</li>
+                            </ol>
+
+                            <p style="margin: 15px 0 5px 0; padding: 10px; background: rgba(0, 255, 65, 0.1); border-left: 2px solid #00ff41; border-radius: 3px;">
+                                <strong style="color: #00ff41;">💡 Quick Fix:</strong> If you have OLD wallets (created before v0.4.20), create a NEW wallet via CLI - it will have mnemonic stored: <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px;">wp umbrella-mines generate-wallet</code>
+                            </p>
+                        </div>
+                    </details>
                 </div>
             </div>
 
-            <div style="text-align: center; padding: 60px 20px; color: #666;">
-                <div style="font-size: 64px; margin-bottom: 20px; opacity: 0.3;">🔀</div>
+            <div style="text-align: center; padding: 40px 20px 20px 20px; color: #666;">
+                <div style="font-size: 64px; line-height: 1; margin-bottom: 25px; opacity: 0.3;">🔀</div>
                 <div style="font-size: 18px; margin-bottom: 12px; color: #e0e0e0;">Start Mining First</div>
                 <div style="font-size: 14px; margin-bottom: 25px;">Create wallets and submit solutions to enable merging</div>
-                <a href="<?php echo admin_url('admin.php?page=umbrella-mines-mining'); ?>" class="button button-primary btn-large">
-                    ⛏️ Go to Mining
+                <a href="<?php echo admin_url('admin.php?page=umbrella-mines'); ?>" class="button button-primary btn-large">
+                    ⛏️ Go to Dashboard
                 </a>
+            </div>
+
+            <!-- Import Custom Wallet Option (Always Available) -->
+            <div style="margin-top: 30px; padding: 25px; background: rgba(0, 255, 65, 0.05); border: 1px solid rgba(0, 255, 65, 0.2); border-radius: 8px;">
+                <h3 style="margin: 0 0 15px 0; color: #00ff41; font-size: 16px;">💡 Already have a registered wallet?</h3>
+                <p style="margin: 0 0 15px 0; color: #999;">If you have an existing wallet from Eternl, Nami, or another platform that's already registered and has submitted solutions, you can import it directly:</p>
+                <button type="button" class="button button-secondary" onclick="document.getElementById('import-wallet-section-fallback').style.display='block'; this.style.display='none';">
+                    Import Existing Wallet
+                </button>
+
+                <div id="import-wallet-section-fallback" style="display: none; margin-top: 20px; padding: 20px; background: rgba(0,0,0,0.3); border-radius: 4px;">
+                    <form id="import-wallet-form-fallback" style="max-width: 600px;">
+                        <div style="margin-bottom: 20px;">
+                            <label style="display: block; margin-bottom: 8px; color: #e0e0e0; font-weight: bold;">24-Word Mnemonic Phrase</label>
+                            <textarea id="fallback-mnemonic" rows="3" style="width: 100%; padding: 10px; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; border-radius: 4px; font-family: monospace;" placeholder="word1 word2 word3 ... word24" required></textarea>
+                            <small style="color: #666;">Enter your 24-word recovery phrase (space-separated)</small>
+                        </div>
+
+                        <div style="margin-bottom: 20px;">
+                            <label style="display: block; margin-bottom: 8px; color: #e0e0e0; font-weight: bold;">Derivation Path (Optional)</label>
+                            <input type="text" id="fallback-derivation" value="0/0/0" style="width: 200px; padding: 8px; background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; border-radius: 4px; font-family: monospace;" />
+                            <small style="color: #666; display: block; margin-top: 5px;">Default: 0/0/0. Change only if you know your wallet's derivation path.</small>
+                        </div>
+
+                        <button type="submit" id="fallback-import-btn" class="button button-primary">
+                            Import & Verify Wallet
+                        </button>
+                        <div id="fallback-status" style="margin-top: 15px;"></div>
+                        <p style="margin: 15px 0 0 0; padding: 10px; background: rgba(255, 193, 7, 0.1); border-left: 2px solid #ffc107; border-radius: 3px; color: #ccc; font-size: 13px;">
+                            ⚠️ <strong>Security:</strong> Your mnemonic is encrypted and stored locally. It never leaves your server.
+                        </p>
+                    </form>
+
+                    <script>
+                    jQuery(document).ready(function($) {
+                        $('#import-wallet-form-fallback').on('submit', function(e) {
+                            e.preventDefault();
+
+                            var mnemonic = $('#fallback-mnemonic').val().trim();
+                            var derivationPath = $('#fallback-derivation').val().trim();
+
+                            if (!mnemonic) {
+                                $('#fallback-status').html('<span style="color: #dc3232;">Please enter a mnemonic phrase</span>');
+                                return;
+                            }
+
+                            $('#fallback-import-btn').prop('disabled', true);
+                            $('#fallback-status').html('<span style="color: #00ff41;">Importing wallet...</span>');
+
+                            $.ajax({
+                                url: ajaxurl,
+                                type: 'POST',
+                                data: {
+                                    action: 'umbrella_import_payout_wallet',
+                                    nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>',
+                                    mnemonic: mnemonic,
+                                    derivation_path: derivationPath
+                                },
+                                success: function(response) {
+                                    $('#fallback-import-btn').prop('disabled', false);
+
+                                    if (response.success) {
+                                        $('#fallback-status').html('<span style="color: #00ff41;">✅ Success! Reloading page...</span>');
+                                        setTimeout(function() {
+                                            window.location.reload();
+                                        }, 1500);
+                                    } else {
+                                        $('#fallback-status').html('<span style="color: #dc3232;">❌ ' + response.data + '</span>');
+                                    }
+                                },
+                                error: function() {
+                                    $('#fallback-import-btn').prop('disabled', false);
+                                    $('#fallback-status').html('<span style="color: #dc3232;">❌ Network error. Please try again.</span>');
+                                }
+                            });
+                        });
+                    });
+                    </script>
+                </div>
             </div>
         </div>
     <?php endif; ?>
