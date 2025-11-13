@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.4.20.6
+ * Version: 0.4.20.67
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('UMBRELLA_MINES_VERSION', '0.4.20.6');
+define('UMBRELLA_MINES_VERSION', '0.4.20.67');
 define('UMBRELLA_MINES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('UMBRELLA_MINES_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('UMBRELLA_MINES_DATA_DIR', WP_CONTENT_DIR . '/uploads/umbrella-mines');
@@ -78,6 +78,14 @@ class Umbrella_Mines {
         add_action('wp_ajax_get_merge_details', array($this, 'ajax_get_merge_details'));
         add_action('wp_ajax_umbrella_import_payout_wallet', array($this, 'ajax_import_payout_wallet'));
         add_action('wp_ajax_umbrella_clear_imported_wallet', array($this, 'ajax_clear_imported_wallet'));
+
+        // Import solutions AJAX hooks
+        add_action('wp_ajax_umbrella_parse_import_file', array($this, 'ajax_parse_import_file'));
+        add_action('wp_ajax_umbrella_start_batch_merge', array($this, 'ajax_start_batch_merge'));
+        add_action('wp_ajax_umbrella_get_merge_progress', array($this, 'ajax_get_merge_progress'));
+        add_action('wp_ajax_umbrella_download_import_receipt', array($this, 'ajax_download_import_receipt'));
+        add_action('wp_ajax_umbrella_check_interrupted_sessions', array($this, 'ajax_check_interrupted_sessions'));
+        add_action('wp_ajax_umbrella_cancel_import_session', array($this, 'ajax_cancel_import_session'));
 
         // Public display hooks
         add_action('init', array($this, 'register_public_display_rewrite'));
@@ -3146,6 +3154,230 @@ class Umbrella_Mines {
         } else {
             error_log("Failed to clear imported wallet: " . $wpdb->last_error);
             wp_send_json_error('Failed to deactivate imported wallet: ' . $wpdb->last_error);
+        }
+    }
+
+    /**
+     * AJAX: Parse uploaded Night Miner export ZIP
+     */
+    public function ajax_parse_import_file() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        // Check for uploaded file
+        if (!isset($_FILES['import_file']) || $_FILES['import_file']['error'] !== UPLOAD_ERR_OK) {
+            wp_send_json_error('No file uploaded or upload error');
+        }
+
+        $file = $_FILES['import_file'];
+
+        // Validate file type
+        if (!in_array($file['type'], ['application/zip', 'application/x-zip-compressed'])) {
+            wp_send_json_error('Invalid file type. Please upload a ZIP file.');
+        }
+
+        // Validate file size (50MB max)
+        if ($file['size'] > 50 * 1024 * 1024) {
+            wp_send_json_error('File too large. Maximum size is 50MB.');
+        }
+
+        $network = get_option('umbrella_mines_network', 'mainnet');
+
+        // Load import processor
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-import-processor.php';
+
+        // Parse the file
+        $result = Umbrella_Mines_Import_Processor::parse_night_miner_export($file['tmp_name'], $network);
+
+        if (is_wp_error($result)) {
+            error_log("Parse error: " . $result->get_error_message());
+            wp_send_json_error($result->get_error_message());
+        }
+
+        // Debug: Log network and result
+        error_log("Network setting: $network");
+        error_log("Parse result - Valid: " . $result['wallet_count'] . ", Invalid: " . $result['invalid_wallets']);
+
+        // Get payout address for session creation
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+        $payout_wallet = Umbrella_Mines_Merge_Processor::get_registered_payout_wallet($network);
+
+        if (!$payout_wallet) {
+            wp_send_json_error('You must configure a payout wallet before importing solutions.');
+        }
+
+        // Create import session
+        $session_key = Umbrella_Mines_Import_Processor::create_import_session(
+            $result['wallets'],
+            $payout_wallet->address,
+            $network
+        );
+
+        wp_send_json_success(array(
+            'wallet_count' => $result['wallet_count'],
+            'wallets_with_solutions' => $result['wallets_with_solutions'],
+            'total_solutions' => $result['total_solutions'],
+            'invalid_wallets' => $result['invalid_wallets'],
+            'night_estimate' => $result['night_estimate'],
+            'network' => $result['network'],
+            'payout_address' => $payout_wallet->address,
+            'session_key' => $session_key
+        ));
+    }
+
+    /**
+     * AJAX: Start batch merge process
+     */
+    public function ajax_start_batch_merge() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $session_key = isset($_POST['session_key']) ? sanitize_text_field($_POST['session_key']) : '';
+
+        if (empty($session_key)) {
+            wp_send_json_error('Session key required');
+        }
+
+        // Load import processor
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-import-processor.php';
+
+        // Start batch merge
+        $result = Umbrella_Mines_Import_Processor::batch_merge_with_resume($session_key);
+
+        if (!$result['success']) {
+            wp_send_json_error($result['error'] ?? 'Merge failed');
+        }
+
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX: Get merge progress for session
+     */
+    public function ajax_get_merge_progress() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $session_key = isset($_POST['session_key']) ? sanitize_text_field($_POST['session_key']) : '';
+
+        if (empty($session_key)) {
+            wp_send_json_error('Session key required');
+        }
+
+        global $wpdb;
+        $sessions_table = $wpdb->prefix . 'umbrella_mining_import_sessions';
+
+        $session = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$sessions_table} WHERE session_key = %s",
+            $session_key
+        ));
+
+        if (!$session) {
+            wp_send_json_error('Session not found');
+        }
+
+        wp_send_json_success(array(
+            'status' => $session->status,
+            'total' => $session->total_wallets,
+            'processed' => $session->processed_wallets,
+            'successful' => $session->successful_count,
+            'failed' => $session->failed_count,
+            'complete' => in_array($session->status, ['completed', 'failed'])
+        ));
+    }
+
+    /**
+     * AJAX: Download import receipt
+     */
+    public function ajax_download_import_receipt() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $session_key = isset($_POST['session_key']) ? sanitize_text_field($_POST['session_key']) : '';
+
+        if (empty($session_key)) {
+            wp_send_json_error('Session key required');
+        }
+
+        // Load import processor
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-import-processor.php';
+
+        $receipt = Umbrella_Mines_Import_Processor::generate_import_receipt($session_key);
+
+        if (!$receipt || isset($receipt['error'])) {
+            wp_send_json_error($receipt['error'] ?? 'Failed to generate receipt');
+        }
+
+        // Return receipt as JSON for download
+        header('Content-Type: application/json');
+        header('Content-Disposition: attachment; filename="umbrella-import-receipt-' . date('Y-m-d-His') . '.json"');
+        echo json_encode($receipt, JSON_PRETTY_PRINT);
+        exit;
+    }
+
+    /**
+     * AJAX: Check for interrupted sessions
+     */
+    public function ajax_check_interrupted_sessions() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        // Load import processor
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-import-processor.php';
+
+        $session = Umbrella_Mines_Import_Processor::get_interrupted_session();
+
+        if ($session) {
+            wp_send_json_success(array('interrupted_session' => $session));
+        } else {
+            wp_send_json_success(array('interrupted_session' => false));
+        }
+    }
+
+    /**
+     * AJAX: Cancel import session
+     */
+    public function ajax_cancel_import_session() {
+        check_ajax_referer('umbrella_mining', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $session_key = isset($_POST['session_key']) ? sanitize_text_field($_POST['session_key']) : '';
+
+        if (empty($session_key)) {
+            wp_send_json_error('Session key required');
+        }
+
+        global $wpdb;
+        $sessions_table = $wpdb->prefix . 'umbrella_mining_import_sessions';
+
+        $updated = $wpdb->update(
+            $sessions_table,
+            ['status' => 'cancelled'],
+            ['session_key' => $session_key]
+        );
+
+        if ($updated !== false) {
+            wp_send_json_success(array('message' => 'Session cancelled'));
+        } else {
+            wp_send_json_error('Failed to cancel session');
         }
     }
 }

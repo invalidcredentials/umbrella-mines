@@ -350,7 +350,7 @@ if (file_exists($log_file)) {
                 </div>
                 <div class="auto-submit-toggle">
                     <label>
-                        <input type="checkbox" id="auto-submit-toggle" <?php echo (!empty($config['submission_enabled']) && $config['submission_enabled'] === '1') ? 'checked' : ''; ?>>
+                        <input type="checkbox" id="auto-submit-toggle" <?php echo (!isset($config['submission_enabled']) || $config['submission_enabled'] === '1') ? 'checked' : ''; ?>>
                         <span>Auto-submit solutions</span>
                     </label>
                 </div>

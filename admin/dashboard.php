@@ -254,7 +254,7 @@ $active_processes = $wpdb->get_results("
 
         <div class="auto-submit-toggle">
             <label>
-                <input type="checkbox" id="auto-submit" <?php echo ($config['submission_enabled'] == '1') ? 'checked' : ''; ?>>
+                <input type="checkbox" id="auto-submit" <?php echo (!isset($config['submission_enabled']) || $config['submission_enabled'] == '1') ? 'checked' : ''; ?>>
                 <strong>Auto-submit solutions</strong> when found (vs. manual review in Solutions tab)
             </label>
         </div>

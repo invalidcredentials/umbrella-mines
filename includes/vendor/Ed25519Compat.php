@@ -171,6 +171,66 @@ final class Ed25519Compat
         return Ed25519Pure::ge_scalarmult_base_noclamp($k);
     }
 
+    /**
+     * Sign using standard Ed25519 with 32-byte seed (RFC 8032)
+     * This is for standard Ed25519 keys that need expansion and clamping
+     *
+     * @param string $msg Message to sign
+     * @param string $seed 32-byte private key seed
+     * @return array ['signature' => 64 bytes, 'pubkey' => 32 bytes]
+     */
+    public static function sign_standard(string $msg, string $seed): array
+    {
+        if (strlen($seed) !== 32) {
+            throw new \InvalidArgumentException('Seed must be 32 bytes');
+        }
+
+        // Expand seed with SHA-512
+        $h = hash('sha512', $seed, true);
+
+        // Split into kL (scalar) and kR (nonce prefix)
+        $kL_unclamped = substr($h, 0, 32);
+        $kR = substr($h, 32, 32);
+
+        // Clamp kL (RFC 8032 requirement for standard Ed25519)
+        $kL = $kL_unclamped;
+        $kL[0]  = chr(ord($kL[0])  & 0xF8);  // Clear lowest 3 bits
+        $kL[31] = chr(ord($kL[31]) & 0x7F);  // Clear highest bit
+        $kL[31] = chr(ord($kL[31]) | 0x40);  // Set second highest bit
+
+        // Derive public key from clamped kL
+        $A = self::ge_scalarmult_base_noclamp($kL);
+
+        // Compute r = H(kR || msg) mod L
+        $r = self::scalar_reduce64(hash('sha512', $kR . $msg, true));
+
+        // Compute R = r*B
+        $R = self::ge_scalarmult_base_noclamp($r);
+
+        // Compute h = H(R || A || msg) mod L
+        $h = self::scalar_reduce64(hash('sha512', $R . $A . $msg, true));
+
+        // Compute S = (r + h*kL) mod L
+        $hkL = self::scalar_mul($h, $kL);
+        $S = self::add_modL($r, $hkL);
+
+        // Signature is R || S
+        $sig = $R . $S;
+
+        // Security: Zero out sensitive intermediate values
+        if (function_exists('sodium_memzero')) {
+            sodium_memzero($r);
+            sodium_memzero($h);
+            sodium_memzero($hkL);
+            sodium_memzero($kL);
+        }
+
+        return [
+            'signature' => $sig,
+            'pubkey' => $A
+        ];
+    }
+
     public static function sign_extended(string $msg, string $kL, string $kR): string
     {
         $A = self::ge_scalarmult_base_noclamp($kL);

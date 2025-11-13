@@ -5,6 +5,51 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.67] - 2025-01-12
+
+### Added
+
+#### Night Miner Import Support (Standard Ed25519 Keys)
+- **Standard Ed25519 Signing** - Added `sign_standard()` method to support 32-byte seed keys from Night Miner exports
+- **Automatic Key Detection** - System now auto-detects 64-char (Night Miner) vs 128-char (extended) keys and uses appropriate signing method
+- **RFC 8032 Compliance** - Proper SHA-512 expansion, scalar clamping, and public key derivation for standard Ed25519 keys
+- **Import Compatibility** - Drag-and-drop imports from Night Miner now work with correct signature validation
+
+#### Merge Progress Enhancements
+- **Real-Time Progress Updates** - Import progress now updates every 2 wallets (small batches) or every 5 wallets (large batches)
+- **Merge All Loading State** - Added animated progress bar with live counts when merging wallets
+- **UI Lockout** - Prevents accidental page refresh or double-clicks during merge operations
+- **Success/Fail Counters** - Live display of successful and failed merge operations
+
+### Changed
+- **Auto-Submit Default** - Solution auto-submission now **enabled by default** (previously off)
+  - Dashboard checkboxes default to checked if not explicitly disabled
+  - WP-CLI mining defaults to auto-submit unless set to '0'
+  - Prevents "lost solutions" where pending solutions never get submitted
+
+### Fixed
+- **Night Miner Signature Validation** - Public key derivation now matches Night Miner's format, resolving 400 Bad Signature errors
+- **Import Progress Jumps** - No more 0% → 100% jumps; smooth progress for all batch sizes
+- **Merge Button Feedback** - Clear visual feedback during wallet consolidation operations
+
+### Technical Details
+
+**Files Modified:**
+- `includes/vendor/Ed25519Compat.php` - Added sign_standard() for RFC 8032 Ed25519
+- `includes/vendor/CardanoCIP8Signer.php` - Auto-detect key type and route to correct signer
+- `admin/dashboard-live.php` - Auto-submit checkbox defaults to checked
+- `admin/dashboard.php` - Auto-submit checkbox defaults to checked
+- `includes/class-wp-cli-commands.php` - Auto-submit default behavior changed
+- `includes/class-import-processor.php` - Adaptive progress update frequency
+- `admin/merge-addresses.php` - Added merge progress UI container with animations
+- `.gitignore` - Excluded test files and backup examples
+
+**Breaking Changes:** None - fully backward compatible
+
+**Migration Notes:** Existing users will see auto-submit automatically enabled on next dashboard load. This prevents the common issue of solutions remaining in "pending" state indefinitely.
+
+---
+
 ## [0.4.20.6] - 2025-11-12
 
 ### Added

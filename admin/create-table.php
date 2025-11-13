@@ -199,6 +199,31 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
         KEY idx_wallet (original_wallet_id)
     ) $charset_collate;";
 
+    // Table 12: Import Sessions (for resumable batch imports)
+    $table_import_sessions = $wpdb->prefix . 'umbrella_mining_import_sessions';
+    $sql_import_sessions = "CREATE TABLE {$table_import_sessions} (
+        id bigint(20) NOT NULL AUTO_INCREMENT,
+        user_id bigint(20) NOT NULL,
+        session_key varchar(64) NOT NULL,
+        import_type varchar(50) DEFAULT 'night_miner',
+        payout_address varchar(255) NOT NULL,
+        total_wallets int NOT NULL DEFAULT 0,
+        processed_wallets int NOT NULL DEFAULT 0,
+        successful_count int NOT NULL DEFAULT 0,
+        failed_count int NOT NULL DEFAULT 0,
+        status varchar(20) DEFAULT 'pending',
+        wallets_data longtext,
+        processed_addresses longtext,
+        error_log longtext,
+        started_at datetime DEFAULT CURRENT_TIMESTAMP,
+        completed_at datetime,
+        last_activity datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY session_key (session_key),
+        KEY idx_user_status (user_id, status),
+        KEY idx_last_activity (last_activity)
+    ) $charset_collate;";
+
     // Create tables
     require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
     dbDelta($sql_wallets);
@@ -212,6 +237,7 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
     dbDelta($sql_night_rates);
     dbDelta($sql_payout_wallet);
     dbDelta($sql_merges);
+    dbDelta($sql_import_sessions);
 
     // EXPLICIT COLUMN ADDITIONS (dbDelta can miss these)
     // Check and add mnemonic_encrypted to wallets table
@@ -267,7 +293,7 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
         }
     }
 
-    echo '<div class="notice notice-success"><p><strong>Success!</strong> All 11 database tables have been created.</p></div>';
+    echo '<div class="notice notice-success"><p><strong>Success!</strong> All 12 database tables have been created.</p></div>';
 }
 
 // Check which tables exist
@@ -283,7 +309,8 @@ $table_names = array(
     'umbrella_mining_processes',
     'umbrella_night_rates',
     'umbrella_mining_payout_wallet',
-    'umbrella_mining_merges'
+    'umbrella_mining_merges',
+    'umbrella_mining_import_sessions'
 );
 
 foreach ($table_names as $table) {

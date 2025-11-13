@@ -43,3 +43,21 @@ create-processes-table.php
 run-activation.php
 test-*.php
 debug-*.php
+compare-*.php
+fix-*.php
+fix-*.sql
+build-*.php
+derive-*.php
+get-*.php
+*-merge-*.php
+CURL-COMMAND.txt
+GET-CURL-COMMAND.bat
+MAKE-CURL.ps1
+
+# Sensitive user data
+umbrella-mines-export-*.json
+*.skey
+*.vkey
+
+# EXCLUDE ENTIRE Night Miner Export folder (contains sensitive wallet data)
+Night Miner Export/

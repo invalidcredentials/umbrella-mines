@@ -810,39 +810,91 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
             return;
         }
 
+        // Show progress container
+        const progressDiv = document.getElementById('merge-all-progress');
         const btn = document.getElementById('merge-all-btn');
         const originalText = btn.innerHTML;
+
+        // Lock UI
         btn.disabled = true;
-        btn.innerHTML = '⏳ Merging...';
+        btn.style.opacity = '0.5';
+        progressDiv.style.display = 'block';
+
+        // Set initial state
+        document.getElementById('merge-total-count').textContent = eligibleCount;
+        document.getElementById('merge-current-count').textContent = '0';
+        document.getElementById('merge-success-count').textContent = '0';
+        document.getElementById('merge-fail-count').textContent = '0';
+        document.getElementById('merge-progress-percent').textContent = '0%';
+        document.getElementById('merge-progress-bar').style.width = '0%';
+        document.getElementById('merge-progress-bar').textContent = '';
+
+        // Simulate progress for better UX (since backend is synchronous)
+        let fakeProgress = 0;
+        const fakeProgressInterval = setInterval(() => {
+            fakeProgress += Math.random() * 15;
+            if (fakeProgress > 90) fakeProgress = 90; // Cap at 90% until real completion
+
+            const progressBar = document.getElementById('merge-progress-bar');
+            progressBar.style.width = fakeProgress + '%';
+            if (fakeProgress > 10) {
+                progressBar.textContent = Math.round(fakeProgress) + '%';
+            }
+            document.getElementById('merge-progress-percent').textContent = Math.round(fakeProgress) + '%';
+        }, 300);
 
         jQuery.post(ajaxurl, {
             action: 'umbrella_merge_all_wallets',
             nonce: '<?php echo wp_create_nonce('umbrella_merge_wallets'); ?>'
         }, function(response) {
-            btn.disabled = false;
-            btn.innerHTML = originalText;
+            clearInterval(fakeProgressInterval);
 
             if (response.success) {
                 const data = response.data;
-                let message = '✅ Merge Complete!\n\n' +
-                    'Total Processed: ' + data.total_wallets + '\n' +
-                    'Successful: ' + data.successful + '\n';
 
-                if (data.already_assigned > 0) {
-                    message += 'Already Assigned: ' + data.already_assigned + '\n';
-                }
+                // Show 100% completion
+                document.getElementById('merge-progress-bar').style.width = '100%';
+                document.getElementById('merge-progress-bar').textContent = '100%';
+                document.getElementById('merge-progress-percent').textContent = '100%';
+                document.getElementById('merge-current-count').textContent = data.total_wallets || eligibleCount;
+                document.getElementById('merge-success-count').textContent = data.successful || 0;
+                document.getElementById('merge-fail-count').textContent = data.failed || 0;
 
-                if (data.failed > 0) {
-                    message += 'Failed: ' + data.failed + '\n';
-                }
+                // Show success message after brief delay
+                setTimeout(() => {
+                    let message = '✅ Merge Complete!\n\n' +
+                        'Total Processed: ' + (data.total_wallets || 0) + '\n' +
+                        'Successful: ' + (data.successful || 0) + '\n';
 
-                message += '\nDuration: ' + data.duration_seconds + 's';
+                    if (data.already_assigned > 0) {
+                        message += 'Already Assigned: ' + data.already_assigned + '\n';
+                    }
 
-                alert(message);
-                location.reload();
+                    if (data.failed > 0) {
+                        message += 'Failed: ' + data.failed + '\n';
+                    }
+
+                    message += '\nDuration: ' + (data.duration_seconds || 0) + 's';
+
+                    alert(message);
+                    location.reload();
+                }, 800);
+
             } else {
+                // Reset UI on error
+                progressDiv.style.display = 'none';
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                btn.innerHTML = originalText;
                 alert('❌ Merge failed: ' + response.data);
             }
+        }).fail(function() {
+            clearInterval(fakeProgressInterval);
+            progressDiv.style.display = 'none';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.innerHTML = originalText;
+            alert('❌ Request failed. Please try again.');
         });
     }
 
@@ -918,6 +970,473 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                 $('#merge-modal').fadeOut(200);
             }
         });
+
+        // ===== IMPORT SOLUTIONS FUNCTIONALITY =====
+
+        // Toggle import solutions section
+        $('#import-solutions-toggle').on('change', function() {
+            $('#import-solutions-section').slideToggle(300);
+        });
+
+        // Drag and drop handlers
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('import-file-input');
+
+        if (dropZone && fileInput) {
+            // Prevent default drag behaviors
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }, false);
+            });
+
+            // Highlight drop zone when dragging over
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, function() {
+                    dropZone.style.borderColor = '#ff6b6b';
+                    dropZone.style.background = 'rgba(255, 107, 107, 0.15)';
+                    dropZone.style.transform = 'scale(1.02)';
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, function() {
+                    dropZone.style.borderColor = 'rgba(255, 107, 107, 0.3)';
+                    dropZone.style.background = 'rgba(255, 107, 107, 0.05)';
+                    dropZone.style.transform = 'scale(1)';
+                }, false);
+            });
+
+            // Handle dropped files
+            dropZone.addEventListener('drop', function(e) {
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleImportFile(files[0]);
+                }
+            }, false);
+
+            // Handle click to browse
+            dropZone.addEventListener('click', function() {
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', function(e) {
+                if (e.target.files.length > 0) {
+                    handleImportFile(e.target.files[0]);
+                }
+            });
+        }
+
+        // Handle file upload and parsing
+        function handleImportFile(file) {
+            console.log('File selected:', file.name);
+
+            // Validate file type
+            if (!file.name.endsWith('.zip')) {
+                alert('❌ Invalid file type. Please upload a ZIP file.');
+                return;
+            }
+
+            // Validate file size (50MB)
+            if (file.size > 50 * 1024 * 1024) {
+                alert('❌ File too large. Maximum size is 50MB.');
+                return;
+            }
+
+            // Show parsing status
+            $('#import-parsing-status').html(`
+                <div style="background: rgba(255, 170, 0, 0.1); border-left: 3px solid #ffaa00; padding: 16px; border-radius: 6px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="font-size: 24px;">⏳</div>
+                        <div>
+                            <div style="color: #ffaa00; font-weight: 600; margin-bottom: 4px;">Parsing ZIP file...</div>
+                            <div style="color: #999; font-size: 13px;">Extracting wallets from ${file.name}</div>
+                        </div>
+                    </div>
+                </div>
+            `).fadeIn();
+
+            // Hide other sections
+            $('#import-preview-container').hide();
+            $('#import-progress-container').hide();
+            $('#import-complete-container').hide();
+
+            // Upload and parse file
+            const formData = new FormData();
+            formData.append('action', 'umbrella_parse_import_file');
+            formData.append('nonce', '<?php echo wp_create_nonce('umbrella_mining'); ?>');
+            formData.append('import_file', file);
+
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function(response) {
+                    if (response.success) {
+                        showImportPreview(response.data);
+                    } else {
+                        $('#import-parsing-status').html(`
+                            <div style="background: rgba(255, 51, 102, 0.1); border-left: 3px solid #ff3366; padding: 16px; border-radius: 6px;">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <div style="font-size: 24px;">❌</div>
+                                    <div>
+                                        <div style="color: #ff3366; font-weight: 600; margin-bottom: 4px;">Parse Failed</div>
+                                        <div style="color: #999; font-size: 13px;">${response.data}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `);
+                    }
+                },
+                error: function() {
+                    $('#import-parsing-status').html(`
+                        <div style="background: rgba(255, 51, 102, 0.1); border-left: 3px solid #ff3366; padding: 16px; border-radius: 6px;">
+                            <div style="color: #ff3366; font-weight: 600;">❌ Network error. Please try again.</div>
+                        </div>
+                    `);
+                }
+            });
+        }
+
+        // Show preview summary
+        function showImportPreview(data) {
+            console.log('Import data:', data);
+
+            // Hide parsing status
+            $('#import-parsing-status').hide();
+
+            // Show preview
+            const html = `
+                <div style="margin-top: 20px;">
+                    <!-- Summary Stats -->
+                    <div class="stats-grid" style="margin-bottom: 20px;">
+                        <div class="stat-card">
+                            <div class="stat-label">📦 Wallets Found</div>
+                            <div class="stat-value">${data.wallet_count}</div>
+                            <div class="stat-meta">Unique addresses</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">✅ With Solutions</div>
+                            <div class="stat-value" style="color: #00ff41;">${data.wallets_with_solutions}</div>
+                            <div class="stat-meta">Have submitted work</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">💎 Total Solutions</div>
+                            <div class="stat-value" style="color: #00d4ff;">${data.total_solutions}</div>
+                            <div class="stat-meta">To be consolidated</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">🌙 Est. NIGHT Value</div>
+                            <div class="stat-value" style="color: #ffaa00;">${data.night_estimate}</div>
+                            <div class="stat-meta">Approximate</div>
+                        </div>
+                    </div>
+
+                    ${data.invalid_wallets > 0 ? `
+                        <div class="warning-box" style="margin-bottom: 20px;">
+                            <div class="warning-box-title">⚠️ ${data.invalid_wallets} Invalid Wallets</div>
+                            <div style="color: #999; font-size: 13px; margin-top: 8px;">
+                                These will be skipped during merge. Check your export file.
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <!-- Danger Warning -->
+                    <div class="danger-box" style="margin-top: 30px;">
+                        <h2 style="margin: 0 0 20px 0; font-size: 20px; line-height: 1.4;">⚠️ CONFIRM MERGE OPERATION</h2>
+                        <div style="margin: 20px 0; font-size: 16px; line-height: 1.8;">
+                            <p style="margin-bottom: 16px;">
+                                All <strong style="color: #ff3366;">${data.wallet_count} wallets</strong>
+                                will permanently assign their rewards to:
+                            </p>
+                            <div class="address-value" style="background: rgba(255, 51, 102, 0.1); border-color: #ff3366;">
+                                <div class="address" style="color: #ff3366; word-break: break-all;">${data.payout_address}</div>
+                            </div>
+                            <p style="margin-top: 16px; color: #ffaa00; font-weight: 600;">
+                                ⚠️ This action CANNOT be undone
+                            </p>
+                        </div>
+
+                        <div style="display: flex; gap: 16px; justify-content: center; margin-top: 25px; flex-wrap: wrap;">
+                            <button
+                                id="confirm-import-merge-btn"
+                                class="button button-primary btn-large"
+                                style="background: linear-gradient(135deg, #ff3366 0%, #cc0033 100%); padding: 12px 20px; font-size: 13px; white-space: nowrap; min-width: 200px;"
+                                onclick="startImportMerge('${data.session_key}')"
+                            >
+                                🚀 MERGE ALL ${data.wallet_count} WALLETS
+                            </button>
+                            <button
+                                class="button btn-large"
+                                style="padding: 12px 24px; font-size: 14px;"
+                                onclick="cancelImport()"
+                            >
+                                ❌ Cancel
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Estimated Time -->
+                    <div style="text-align: center; margin-top: 20px; color: #666; font-size: 13px;">
+                        <span style="opacity: 0.8;">
+                            ⏱️ Estimated processing time: ~${Math.ceil(data.wallet_count * 0.5 / 60)} minutes
+                            (${data.wallet_count} wallets × 0.5s/wallet, auto-adjusts based on API speed)
+                        </span>
+                    </div>
+                </div>
+            `;
+
+            $('#import-preview-container').html(html).fadeIn();
+
+            // Store session key
+            window.currentImportSessionKey = data.session_key;
+        }
+
+        // Cancel import
+        function cancelImport() {
+            if (confirm('Cancel import and clear parsed data?')) {
+                $('#import-solutions-section').find('input[type="file"]').val('');
+                $('#import-parsing-status').hide();
+                $('#import-preview-container').hide();
+                $('#import-progress-container').hide();
+                $('#import-complete-container').hide();
+            }
+        }
+
+        // Start batch merge
+        window.startImportMerge = function(sessionKey) {
+            console.log('Starting batch merge for session:', sessionKey);
+
+            // Hide preview, show progress
+            $('#import-preview-container').hide();
+            $('#import-progress-container').html(`
+                <div style="background: rgba(0, 255, 65, 0.05); border: 2px solid #00ff41; border-radius: 8px; padding: 30px;">
+                    <h3 style="color: #00ff41; margin: 0 0 20px 0; text-align: center;">
+                        🚀 Merging Wallets...
+                    </h3>
+
+                    <!-- Progress Bar -->
+                    <div style="background: rgba(0, 0, 0, 0.5); border-radius: 8px; height: 30px; margin-bottom: 20px; overflow: hidden; position: relative;">
+                        <div id="import-progress-bar" style="background: linear-gradient(90deg, #00ff41 0%, #00d4ff 100%); height: 100%; width: 0%; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center;">
+                            <span id="import-progress-percent" style="color: #000; font-weight: 700; font-size: 14px; position: absolute; left: 50%; transform: translateX(-50%);">0%</span>
+                        </div>
+                    </div>
+
+                    <!-- Status Text -->
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <div style="font-size: 16px; color: #e0e0e0; margin-bottom: 8px;">
+                            Processing wallet <span id="import-current-wallet">0</span> of <span id="import-total-wallets">0</span>
+                        </div>
+                        <div style="font-size: 13px; color: #999;">
+                            ✅ Successful: <span id="import-success-count" style="color: #00ff41;">0</span> |
+                            ❌ Failed: <span id="import-fail-count" style="color: #ff3366;">0</span>
+                        </div>
+                    </div>
+
+                    <div style="text-align: center; font-size: 12px; color: #666;">
+                        ⏳ This may take several minutes. Don't close this page.
+                    </div>
+                </div>
+            `).fadeIn();
+
+            // Start the merge process
+            $.post(ajaxurl, {
+                action: 'umbrella_start_batch_merge',
+                session_key: sessionKey,
+                nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+            }, function(response) {
+                if (!response.success) {
+                    // If immediate error
+                    alert('❌ Merge failed: ' + (response.data || 'Unknown error'));
+                    $('#import-progress-container').hide();
+                    $('#import-preview-container').show();
+                    return;
+                }
+            });
+
+            // Poll for progress
+            const progressInterval = setInterval(function() {
+                $.post(ajaxurl, {
+                    action: 'umbrella_get_merge_progress',
+                    session_key: sessionKey,
+                    nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+                }, function(response) {
+                    if (response.success) {
+                        updateImportProgress(response.data);
+
+                        if (response.data.complete) {
+                            clearInterval(progressInterval);
+                            showImportCompletion(response.data, sessionKey);
+                        }
+                    }
+                });
+            }, 2000); // Poll every 2 seconds
+        };
+
+        // Update progress UI
+        function updateImportProgress(data) {
+            const percent = data.total > 0 ? Math.round((data.processed / data.total) * 100) : 0;
+
+            $('#import-progress-bar').css('width', percent + '%');
+            $('#import-progress-percent').text(percent + '%');
+            $('#import-current-wallet').text(data.processed);
+            $('#import-total-wallets').text(data.total);
+            $('#import-success-count').text(data.successful);
+            $('#import-fail-count').text(data.failed);
+        }
+
+        // Show completion screen
+        function showImportCompletion(data, sessionKey) {
+            $('#import-progress-container').hide();
+
+            const html = `
+                <div style="background: rgba(0, 255, 65, 0.05); border: 2px solid #00ff41; border-radius: 8px; padding: 40px; text-align: center;">
+                    <div style="font-size: 64px; margin-bottom: 20px;">✅</div>
+                    <h2 style="color: #00ff41; margin: 0 0 30px 0;">Import Complete!</h2>
+
+                    <div class="stats-grid" style="margin-bottom: 30px;">
+                        <div class="stat-card">
+                            <div class="stat-label">Total Processed</div>
+                            <div class="stat-value">${data.total}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Successful</div>
+                            <div class="stat-value" style="color: #00ff41;">${data.successful}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Failed</div>
+                            <div class="stat-value" style="color: ${data.failed > 0 ? '#ff3366' : '#666'};">${data.failed}</div>
+                        </div>
+                    </div>
+
+                    ${data.failed > 0 ? `
+                        <div class="warning-box" style="margin-bottom: 20px;">
+                            <div class="warning-box-title">⚠️ Some Merges Failed</div>
+                            <div style="color: #999; font-size: 13px; margin-top: 8px;">
+                                ${data.failed} wallet(s) could not be merged. Check the receipt for details.
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div style="display: flex; gap: 12px; justify-content: center; margin-top: 30px;">
+                        <button class="button button-primary" onclick="downloadImportReceipt('${sessionKey}')">
+                            📄 Download Receipt
+                        </button>
+                        <button class="button" onclick="location.reload()">
+                            🔄 Reload Page
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            $('#import-complete-container').html(html).fadeIn();
+        }
+
+        // Download receipt
+        window.downloadImportReceipt = function(sessionKey) {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = ajaxurl;
+            form.target = '_blank';
+
+            const fields = {
+                action: 'umbrella_download_import_receipt',
+                session_key: sessionKey,
+                nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+            };
+
+            for (const key in fields) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = key;
+                input.value = fields[key];
+                form.appendChild(input);
+            }
+
+            document.body.appendChild(form);
+            form.submit();
+            document.body.removeChild(form);
+        };
+
+        // Check for interrupted sessions on page load
+        $.post(ajaxurl, {
+            action: 'umbrella_check_interrupted_sessions',
+            nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+        }, function(response) {
+            if (response.success && response.data.interrupted_session) {
+                const session = response.data.interrupted_session;
+                showResumePrompt(session);
+            }
+        });
+
+        // Show resume prompt
+        function showResumePrompt(session) {
+            const remaining = session.total_wallets - session.processed_wallets;
+
+            const html = `
+                <div class="notice notice-warning" style="padding: 20px; margin-bottom: 20px; background: rgba(255, 170, 0, 0.1); border-left: 4px solid #ffaa00;">
+                    <h3 style="color: #ffaa00; margin: 0 0 12px 0;">⚠️ Interrupted Import Detected</h3>
+                    <p style="margin: 0 0 12px 0;">You have an incomplete import from ${session.started_at}:</p>
+                    <ul style="margin: 0 0 16px 0; padding-left: 20px;">
+                        <li><strong>Total Wallets:</strong> ${session.total_wallets}</li>
+                        <li><strong>Processed:</strong> ${session.processed_wallets}</li>
+                        <li><strong>Remaining:</strong> ${remaining}</li>
+                        <li><strong>Successful:</strong> ${session.successful_count}</li>
+                        <li><strong>Failed:</strong> ${session.failed_count}</li>
+                    </ul>
+                    <div style="display: flex; gap: 12px;">
+                        <button onclick="resumeImport('${session.session_key}')" class="button button-primary">
+                            🔄 Resume Import
+                        </button>
+                        <button onclick="cancelImportSession('${session.session_key}')" class="button">
+                            ❌ Cancel & Start Fresh
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            $('.page-header').after(html);
+        }
+
+        // Resume import
+        window.resumeImport = function(sessionKey) {
+            // Expand the import section
+            $('#import-solutions-toggle').prop('checked', true);
+            $('#import-solutions-section').slideDown(300);
+
+            // Hide other sections
+            $('#import-parsing-status').hide();
+            $('#import-preview-container').hide();
+            $('#import-complete-container').hide();
+
+            // Start merging directly
+            setTimeout(function() {
+                startImportMerge(sessionKey);
+            }, 500);
+        };
+
+        // Cancel session
+        window.cancelImportSession = function(sessionKey) {
+            if (!confirm('Cancel this import session? This cannot be undone.')) {
+                return;
+            }
+
+            $.post(ajaxurl, {
+                action: 'umbrella_cancel_import_session',
+                session_key: sessionKey,
+                nonce: '<?php echo wp_create_nonce('umbrella_mining'); ?>'
+            }, function(response) {
+                if (response.success) {
+                    location.reload();
+                } else {
+                    alert('Failed to cancel session');
+                }
+            });
+        };
+
     });
     </script>
 
@@ -1060,6 +1579,71 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
             </div>
         </div>
 
+        <!-- Import Solutions from Other Miners -->
+        <div class="card" style="margin-bottom: 30px; border-left: 4px solid #ff6b6b; background: rgba(255, 107, 107, 0.03); box-shadow: 0 0 20px rgba(255, 107, 107, 0.1);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <div>
+                    <h3 style="margin: 0 0 4px 0; color: #ff6b6b; font-size: 18px; letter-spacing: 0.5px; text-shadow: 0 0 10px rgba(255, 107, 107, 0.5);">
+                        📦 Import Solutions from Other Miners
+                    </h3>
+                    <p style="margin: 0; font-size: 12px; color: #666; font-style: italic;">
+                        Drag and drop ZIP exports from Night Miner or other platforms
+                    </p>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="import-solutions-toggle">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div id="import-solutions-section" style="display: none; margin-top: 24px; padding-top: 20px; border-top: 1px solid rgba(255, 107, 107, 0.2);">
+
+                <!-- Info Box -->
+                <div style="background: rgba(255, 107, 107, 0.05); border: 1px dashed rgba(255, 107, 107, 0.3); padding: 16px; border-radius: 6px; margin-bottom: 20px;">
+                    <div style="display: flex; align-items: start; gap: 12px;">
+                        <div style="font-size: 24px; flex-shrink: 0;">💡</div>
+                        <div style="color: #aaa; font-size: 13px; line-height: 1.6;">
+                            <strong style="color: #ff6b6b; display: block; margin-bottom: 4px;">What This Does:</strong>
+                            Import wallet exports from Night Miner and other mining platforms. All wallets in the file will be merged to your payout address: <code style="color: #00ff41; word-break: break-all; display: inline-block; max-width: 100%;"><?php echo esc_html($payout_wallet->address); ?></code>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Drag and Drop Zone -->
+                <div id="drop-zone" style="
+                    border: 3px dashed rgba(255, 107, 107, 0.3);
+                    background: rgba(255, 107, 107, 0.05);
+                    border-radius: 12px;
+                    padding: 60px 40px;
+                    text-align: center;
+                    cursor: pointer;
+                    transition: all 0.3s ease;
+                    margin-bottom: 20px;
+                " onmouseover="this.style.borderColor='#ff6b6b'; this.style.background='rgba(255, 107, 107, 0.1)'" onmouseout="this.style.borderColor='rgba(255, 107, 107, 0.3)'; this.style.background='rgba(255, 107, 107, 0.05)'">
+                    <div style="font-size: 64px; margin-bottom: 28px; opacity: 0.6; line-height: 1;">📦</div>
+                    <div style="font-size: 16px; font-weight: 600; color: #ff6b6b; margin-bottom: 8px;">
+                        Drag ZIP file here or click to browse
+                    </div>
+                    <div style="font-size: 13px; color: #999;">
+                        Supported: Night Miner exports (.zip) • Max size: 50MB
+                    </div>
+                    <input type="file" id="import-file-input" accept=".zip" style="display: none;">
+                </div>
+
+                <!-- Parsing Status -->
+                <div id="import-parsing-status" style="display: none; margin-bottom: 20px;"></div>
+
+                <!-- Preview Summary -->
+                <div id="import-preview-container" style="display: none;"></div>
+
+                <!-- Progress Tracking -->
+                <div id="import-progress-container" style="display: none;"></div>
+
+                <!-- Completion Screen -->
+                <div id="import-complete-container" style="display: none;"></div>
+            </div>
+        </div>
+
         <div class="stats-grid" style="margin-bottom: 30px;">
             <div class="stat-card">
                 <div class="stat-label">Payout Wallet</div>
@@ -1111,6 +1695,29 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                     <span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Export All Merged (<?php echo $stats['merged_wallets']; ?>)
                 </button>
             <?php endif; ?>
+        </div>
+
+        <!-- Merge Progress Container -->
+        <div id="merge-all-progress" style="display: none; margin-bottom: 30px; padding: 24px; background: rgba(0, 255, 65, 0.05); border: 2px solid rgba(0, 255, 65, 0.2); border-radius: 8px;">
+            <div style="font-size: 16px; color: #00ff41; font-weight: 600; margin-bottom: 16px; letter-spacing: 1px;">
+                ⚡ MERGING WALLETS...
+            </div>
+
+            <div style="margin-bottom: 12px;">
+                <div style="background: rgba(0, 0, 0, 0.3); height: 24px; border-radius: 12px; overflow: hidden; position: relative;">
+                    <div id="merge-progress-bar" style="background: linear-gradient(90deg, #00ff41, #00d4ff); height: 100%; width: 0%; transition: width 0.3s ease; display: flex; align-items: center; justify-content: center; color: #000; font-weight: 700; font-size: 12px;"></div>
+                </div>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; color: #aaa; font-size: 13px; margin-bottom: 8px;">
+                <span>Processing: <strong id="merge-current-count" style="color: #00ff41;">0</strong> / <strong id="merge-total-count" style="color: #fff;">0</strong></span>
+                <span id="merge-progress-percent" style="color: #00d4ff; font-weight: 600;">0%</span>
+            </div>
+
+            <div style="display: flex; gap: 20px; font-size: 12px; color: #999; margin-top: 12px; padding-top: 12px; border-top: 1px dashed rgba(255, 255, 255, 0.1);">
+                <span>✅ Successful: <strong id="merge-success-count" style="color: #00ff41;">0</strong></span>
+                <span>❌ Failed: <strong id="merge-fail-count" style="color: #ff6b6b;">0</strong></span>
+            </div>
         </div>
 
         <?php if (!empty($stats['merge_history'])): ?>

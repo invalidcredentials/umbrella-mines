@@ -643,16 +643,19 @@ class Umbrella_Mines_CLI_Commands {
 
         WP_CLI::line('    💾 Solution backed up to: ' . basename($backup_file));
 
-        // Check if auto-submit is enabled
+        // Check if auto-submit is enabled (default to enabled if not set)
         $config_table = $wpdb->prefix . 'umbrella_mining_config';
         $auto_submit = $wpdb->get_var($wpdb->prepare(
             "SELECT config_value FROM {$config_table} WHERE config_key = %s",
             'submission_enabled'
         ));
 
-        if ($auto_submit === '1') {
+        // Default to enabled (true) if not explicitly set to '0'
+        if ($auto_submit !== '0') {
             WP_CLI::line('    🚀 Auto-submit enabled, submitting solution...');
             $this->submit_solution($solution_id, $wallet->address, $challenge['challenge_id'], $solution['nonce']);
+        } else {
+            WP_CLI::line('    ⏸️  Auto-submit disabled - solution saved but not submitted');
         }
     }
 

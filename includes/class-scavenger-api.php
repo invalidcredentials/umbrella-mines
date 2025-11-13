@@ -329,6 +329,8 @@ class Umbrella_Mines_ScavengerAPI {
         error_log("$log_prefix Original: " . $original_address);
         error_log("$log_prefix Signature (first 50): " . substr($signature, 0, 50) . "...");
         error_log("$log_prefix Signature (length): " . strlen($signature));
+        error_log("$log_prefix Signature (FULL): " . $signature);
+        error_log("$log_prefix CURL: curl -X POST '" . $url . "' -H 'Content-Type: application/json' -d '{}'");
 
         $response = wp_remote_post($url, array(
             'timeout' => 60,

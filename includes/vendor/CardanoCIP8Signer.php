@@ -26,16 +26,7 @@ class CardanoCIP8Signer {
      * @return array ['signature' => hex, 'pubkey' => hex]
      */
     public static function sign_message($message, $extended_key_hex, $address, $network = 'mainnet') {
-        // Decode extended key
-        if (strlen($extended_key_hex) !== 128) {
-            throw new Exception('Extended key must be 128 hex chars (64 bytes)');
-        }
-
-        $kL = hex2bin(substr($extended_key_hex, 0, 64));
-        $kR = hex2bin(substr($extended_key_hex, 64, 64));
-
-        // Derive public key (no-clamp)
-        $pubkey = Ed25519Compat::ge_scalarmult_base_noclamp($kL);
+        $key_length = strlen($extended_key_hex);
 
         // Decode address to bytes
         $address_bytes = self::bech32_decode($address);
@@ -46,8 +37,35 @@ class CardanoCIP8Signer {
         // Build Sig_structure (what we actually sign)
         $sig_structure = self::encode_sig_structure($prot_header, $message);
 
-        // Sign using extended key
-        $signature = Ed25519Compat::sign_extended($sig_structure, $kL, $kR);
+        // Choose signing method based on key length
+        if ($key_length === 64) {
+            // Standard 32-byte private key seed (Night Miner format)
+            // Use standard Ed25519 signing with expansion and clamping
+            error_log("CIP-8: Signing with 64-char standard key (will expand with SHA-512 and clamp)");
+
+            $seed = hex2bin($extended_key_hex);
+            $result = Ed25519Compat::sign_standard($sig_structure, $seed);
+
+            $signature = $result['signature'];
+            $pubkey = $result['pubkey'];
+
+        } elseif ($key_length === 128) {
+            // Extended 64-byte key (our format - already kL||kR)
+            // Use extended signing (no expansion or clamping needed)
+            error_log("CIP-8: Signing with 128-char extended key");
+
+            $kL = hex2bin(substr($extended_key_hex, 0, 64));
+            $kR = hex2bin(substr($extended_key_hex, 64, 64));
+
+            // Derive public key (no-clamp - extended keys are already processed)
+            $pubkey = Ed25519Compat::ge_scalarmult_base_noclamp($kL);
+
+            // Sign using extended key format
+            $signature = Ed25519Compat::sign_extended($sig_structure, $kL, $kR);
+
+        } else {
+            throw new Exception("Key must be 64 hex chars (32 bytes standard) or 128 hex chars (64 bytes extended), got $key_length");
+        }
 
         // Build COSE_Sign1 structure
         $cose_sign1 = self::encode_cose_sign1($prot_header, $message, $signature);
@@ -55,7 +73,6 @@ class CardanoCIP8Signer {
         return array(
             'signature' => bin2hex($cose_sign1),
             'pubkey' => bin2hex($pubkey), // ✓ CORRECT: Actual public key (32 bytes)
-            'pubkey_kL' => substr($extended_key_hex, 0, 64), // kL (private key half - DO NOT USE for API!)
             'signature_raw' => bin2hex($signature),
             'pubkey_bytes' => bin2hex($pubkey) // Same as pubkey - kept for backwards compat
         );
