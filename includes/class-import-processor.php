@@ -172,8 +172,8 @@ class Umbrella_Mines_Import_Processor {
         $wallets_with_solutions = count(array_filter($wallets, fn($w) => $w['has_solutions']));
         $total_solutions = array_sum(array_column($wallets, 'solution_count'));
 
-        // Estimate NIGHT value
-        $night_estimate = self::calculate_night_estimate($total_solutions);
+        // Estimate NIGHT value (using challenge_submissions data for accurate calculation)
+        $night_estimate = self::calculate_night_estimate_from_challenges($challenge_submissions);
 
         return [
             'success' => true,
@@ -183,40 +183,115 @@ class Umbrella_Mines_Import_Processor {
             'total_solutions' => $total_solutions,
             'invalid_wallets' => $invalid_count,
             'night_estimate' => $night_estimate,
+            'night_breakdown' => $night_estimate['breakdown'] ?? [],
             'network' => $network
         ];
     }
 
     /**
-     * Calculate estimated NIGHT value from solution count
+     * Calculate estimated NIGHT value from challenge_submissions data
      *
-     * @param int $solution_count Number of solutions
-     * @return string Formatted NIGHT estimate
+     * Uses actual day-specific work_to_star_rate values from API for accurate calculation
+     *
+     * @param array $challenge_submissions Challenge submissions from wallet.json
+     * @return array NIGHT estimate with breakdown by day
      */
-    private static function calculate_night_estimate($solution_count) {
-        if ($solution_count === 0) {
-            return '0 NIGHT';
+    private static function calculate_night_estimate_from_challenges($challenge_submissions) {
+        if (empty($challenge_submissions)) {
+            return [
+                'total' => '0 NIGHT',
+                'total_numeric' => 0,
+                'breakdown' => []
+            ];
         }
 
-        // Get current challenge data (contains work_to_star_rate)
+        // Fetch work_to_star_rate values from API
         $api_url = get_option('umbrella_mines_api_url', 'https://scavenger.prod.gd.midnighttge.io');
-        $challenge = Umbrella_Mines_ScavengerAPI::get_challenge($api_url);
+        $rates_response = wp_remote_get($api_url . '/work_to_star_rate', array(
+            'timeout' => 10,
+            'sslverify' => false
+        ));
 
-        if (!$challenge) {
-            return 'Unknown (API unavailable)';
+        $day_rates = [];
+        if (!is_wp_error($rates_response)) {
+            $body = wp_remote_retrieve_body($rates_response);
+            $rates_data = json_decode($body, true);
+
+            // API returns array indexed by day (0-based or 1-based, need to test)
+            if (is_array($rates_data)) {
+                $day_rates = $rates_data;
+                error_log("Fetched " . count($day_rates) . " day rates from API");
+            }
+        } else {
+            error_log("Failed to fetch work_to_star_rate: " . $rates_response->get_error_message());
         }
 
-        // Work-to-star rate calculation (simplified)
-        // This is an approximation - actual calculation may vary
-        $work_to_star_rate = 1000; // Default estimate if not in challenge data
+        // Parse challenge_submissions to group solutions by day
+        $solutions_by_day = [];
 
-        if (isset($challenge['work_to_star_rate'])) {
-            $work_to_star_rate = (int) $challenge['work_to_star_rate'];
+        foreach ($challenge_submissions as $challenge_id => $wallet_indices) {
+            // Parse challenge ID format: **D06C19 → Day 6, Challenge 19
+            // Extract day number from challenge ID
+            if (preg_match('/\*\*D(\d+)C\d+/', $challenge_id, $matches)) {
+                $day = (int) $matches[1];
+                $solution_count = count($wallet_indices);
+
+                if (!isset($solutions_by_day[$day])) {
+                    $solutions_by_day[$day] = 0;
+                }
+                $solutions_by_day[$day] += $solution_count;
+
+                error_log("Challenge $challenge_id → Day $day: $solution_count solutions");
+            } else {
+                error_log("WARNING: Could not parse challenge ID: $challenge_id");
+            }
         }
 
-        $estimated_night = round($solution_count * $work_to_star_rate / 1000000, 2);
+        // Calculate NIGHT per day
+        $total_night = 0;
+        $breakdown = [];
 
-        return number_format($estimated_night, 2) . ' NIGHT (estimate)';
+        foreach ($solutions_by_day as $day => $solution_count) {
+            // Try both 0-based and 1-based indexing for API rates
+            $work_to_star_rate = $day_rates[$day] ?? $day_rates[$day - 1] ?? null;
+
+            if ($work_to_star_rate === null) {
+                error_log("WARNING: No work_to_star_rate found for day $day");
+                $breakdown[$day] = [
+                    'day' => $day,
+                    'solutions' => $solution_count,
+                    'rate' => 'Unknown',
+                    'night' => 'Unknown'
+                ];
+                continue;
+            }
+
+            // Calculate: NIGHT = (solutions * work_to_star_rate) / 1,000,000
+            $star_earned = $solution_count * (int) $work_to_star_rate;
+            $night_earned = $star_earned / 1000000;
+            $total_night += $night_earned;
+
+            $breakdown[$day] = [
+                'day' => $day,
+                'solutions' => $solution_count,
+                'rate' => number_format($work_to_star_rate),
+                'night' => number_format($night_earned, 2)
+            ];
+
+            error_log(sprintf(
+                "Day %d: %d solutions × %s STAR/solution = %s NIGHT",
+                $day,
+                $solution_count,
+                number_format($work_to_star_rate),
+                number_format($night_earned, 2)
+            ));
+        }
+
+        return [
+            'total' => number_format($total_night, 2) . ' NIGHT',
+            'total_numeric' => $total_night,
+            'breakdown' => $breakdown
+        ];
     }
 
     /**

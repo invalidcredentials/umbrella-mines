@@ -19,9 +19,11 @@ class Umbrella_Mines_Merge_Processor {
      * Get merge statistics
      *
      * @param string $network Network
+     * @param int $page Page number for merge history (default 1)
+     * @param int $per_page Items per page for merge history (default 10)
      * @return array Statistics
      */
-    public static function get_statistics($network = 'mainnet') {
+    public static function get_statistics($network = 'mainnet', $page = 1, $per_page = 10) {
         global $wpdb;
 
         $wallets_table = $wpdb->prefix . 'umbrella_mining_wallets';
@@ -74,20 +76,28 @@ class Umbrella_Mines_Merge_Processor {
             WHERE status = 'success'
         "));
 
-        // Merge history (recent 50)
-        $merge_history = $wpdb->get_results("
+        // Total merge count for pagination
+        $total_merges = $wpdb->get_var("SELECT COUNT(*) FROM {$merges_table}");
+
+        // Merge history with pagination
+        $offset = ($page - 1) * $per_page;
+        $merge_history = $wpdb->get_results($wpdb->prepare("
             SELECT m.*, w.address as original_addr
             FROM {$merges_table} m
             LEFT JOIN {$wallets_table} w ON m.original_wallet_id = w.id
             ORDER BY m.merged_at DESC
-            LIMIT 50
-        ");
+            LIMIT %d OFFSET %d
+        ", $per_page, $offset));
 
         return [
             'total_wallets' => (int) $total_wallets,
             'eligible_wallets' => (int) $eligible_wallets,
             'merged_wallets' => (int) $merged_wallets,
-            'merge_history' => $merge_history
+            'merge_history' => $merge_history,
+            'total_merges' => (int) $total_merges,
+            'merge_page' => $page,
+            'merge_per_page' => $per_page,
+            'merge_total_pages' => ceil($total_merges / $per_page)
         ];
     }
 

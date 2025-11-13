@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.4.20.67
+ * Version: 0.4.20.68
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('UMBRELLA_MINES_VERSION', '0.4.20.67');
+define('UMBRELLA_MINES_VERSION', '0.4.20.68');
 define('UMBRELLA_MINES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('UMBRELLA_MINES_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('UMBRELLA_MINES_DATA_DIR', WP_CONTENT_DIR . '/uploads/umbrella-mines');
@@ -78,6 +78,7 @@ class Umbrella_Mines {
         add_action('wp_ajax_get_merge_details', array($this, 'ajax_get_merge_details'));
         add_action('wp_ajax_umbrella_import_payout_wallet', array($this, 'ajax_import_payout_wallet'));
         add_action('wp_ajax_umbrella_clear_imported_wallet', array($this, 'ajax_clear_imported_wallet'));
+        add_action('wp_ajax_umbrella_load_merge_page', array($this, 'ajax_load_merge_page'));
 
         // Import solutions AJAX hooks
         add_action('wp_ajax_umbrella_parse_import_file', array($this, 'ajax_parse_import_file'));
@@ -3155,6 +3156,37 @@ class Umbrella_Mines {
             error_log("Failed to clear imported wallet: " . $wpdb->last_error);
             wp_send_json_error('Failed to deactivate imported wallet: ' . $wpdb->last_error);
         }
+    }
+
+    /**
+     * AJAX: Load merge history page
+     */
+    public function ajax_load_merge_page() {
+        check_ajax_referer('umbrella_merge_pagination', 'nonce');
+
+        $page = isset($_POST['page']) ? max(1, (int)$_POST['page']) : 1;
+        $network = get_option('umbrella_mines_network', 'mainnet');
+
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+
+        // Get merge history for this page
+        $stats = Umbrella_Mines_Merge_Processor::get_statistics($network, $page, 10);
+
+        // Format the data for JavaScript
+        $merges = array();
+        foreach ($stats['merge_history'] as $merge) {
+            $merges[] = array(
+                'id' => $merge->id,
+                'original_address' => $merge->original_address,
+                'solutions_consolidated' => (int) $merge->solutions_consolidated,
+                'status' => $merge->status,
+                'time_ago' => human_time_diff(strtotime($merge->merged_at), current_time('timestamp'))
+            );
+        }
+
+        wp_send_json_success(array(
+            'merges' => $merges
+        ));
     }
 
     /**

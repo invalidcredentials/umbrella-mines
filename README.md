@@ -1,6 +1,6 @@
 # UMBRELLA MINES $NIGHT MINER
 
-![Version](https://img.shields.io/badge/version-0.4.20.67-blue.svg)
+![Version](https://img.shields.io/badge/version-0.4.20.68-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
 ![PHP](https://img.shields.io/badge/PHP-8.3.17-777BB4.svg)
 

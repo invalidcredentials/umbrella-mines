@@ -5,6 +5,35 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.68] - 2025-01-12
+
+### Fixed
+
+#### Accurate NIGHT Estimation from Challenge Data
+- **Challenge ID Parsing** - Import processor now extracts day numbers from challenge IDs (e.g., `**D14C24` → Day 14)
+- **Day-Specific Rate Fetching** - Fetches work_to_star_rate for each mining day from API endpoint `/work_to_star_rate`
+- **Per-Day Calculation** - Calculates NIGHT accurately: `(solutions × work_to_star_rate) / 1,000,000` for each day
+- **Breakdown Display** - Import preview shows detailed breakdown: day, solutions, rate, and NIGHT earned per day
+- **Correct Formula** - Fixed calculation that was incorrectly dividing by 1,000,000 without using actual daily rates
+
+### Technical Details
+
+**Problem:** Previous NIGHT estimation used current challenge's work_to_star_rate and incorrect formula, showing 0.40 NIGHT instead of 4,320 NIGHT for 397 Day 14 solutions.
+
+**Solution:** Parse `challenge_submissions` object from Night Miner wallet.json to extract day numbers and count solutions per day. Fetch all daily rates from API and calculate accurately.
+
+**Example Calculation:**
+- Day 14: 397 solutions × 10,882,519 STAR/solution = 4,320,360,043 STAR ÷ 1,000,000 = 4,320.36 NIGHT ✓
+
+**Files Modified:**
+- `includes/class-import-processor.php` - Replaced `calculate_night_estimate()` with `calculate_night_estimate_from_challenges()`
+- `admin/merge-addresses.php` - Added breakdown table showing per-day NIGHT calculation
+
+**API Endpoint Used:**
+- `GET /work_to_star_rate` - Returns array of daily conversion rates
+
+---
+
 ## [0.4.20.67] - 2025-01-12
 
 ### Added

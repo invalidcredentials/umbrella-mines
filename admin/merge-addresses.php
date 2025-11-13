@@ -25,8 +25,8 @@ if ($payout_wallet) {
     $is_imported_wallet = property_exists($payout_wallet, 'wallet_name');
 }
 
-// Get merge statistics
-$stats = Umbrella_Mines_Merge_Processor::get_statistics($network);
+// Get merge statistics with pagination (default page 1)
+$stats = Umbrella_Mines_Merge_Processor::get_statistics($network, 1, 10);
 error_log('Merge stats: ' . print_r($stats, true));
 
 // Check for error/success messages
@@ -508,6 +508,11 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
     @keyframes float {
         0%, 100% { transform: translateY(0px); }
         50% { transform: translateY(-5px); }
+    }
+
+    @keyframes anvil-pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.1); }
     }
 
     .coming-soon-close {
@@ -1130,10 +1135,29 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         </div>
                         <div class="stat-card">
                             <div class="stat-label">🌙 Est. NIGHT Value</div>
-                            <div class="stat-value" style="color: #ffaa00;">${data.night_estimate}</div>
-                            <div class="stat-meta">Approximate</div>
+                            <div class="stat-value" style="color: #ffaa00;">${typeof data.night_estimate === 'object' ? data.night_estimate.total : data.night_estimate}</div>
+                            <div class="stat-meta">Based on actual rates</div>
                         </div>
                     </div>
+
+                    ${data.night_estimate?.breakdown && Object.keys(data.night_estimate.breakdown).length > 0 ? `
+                        <div class="info-box" style="margin-bottom: 20px; background: rgba(255, 170, 0, 0.05); border-color: #ffaa00;">
+                            <div style="font-weight: 600; margin-bottom: 12px; color: #ffaa00;">📊 NIGHT Breakdown by Mining Day</div>
+                            <div style="font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.8;">
+                                ${Object.values(data.night_estimate.breakdown).map(day => `
+                                    <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255, 170, 0, 0.1);">
+                                        <span style="color: #aaa;">Day ${day.day}:</span>
+                                        <span style="color: #00ff41;">${day.solutions} solutions × ${day.rate} STAR</span>
+                                        <span style="color: #ffaa00; font-weight: 600;">${day.night} NIGHT</span>
+                                    </div>
+                                `).join('')}
+                                <div style="display: flex; justify-content: space-between; padding: 8px 0; margin-top: 8px; font-weight: 600; border-top: 2px solid rgba(255, 170, 0, 0.3);">
+                                    <span style="color: #fff;">TOTAL:</span>
+                                    <span style="color: #ffaa00; font-size: 16px;">${data.night_estimate.total}</span>
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
 
                     ${data.invalid_wallets > 0 ? `
                         <div class="warning-box" style="margin-bottom: 20px;">
@@ -1697,6 +1721,179 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
             <?php endif; ?>
         </div>
 
+        <!-- Anvil API Promo Banner -->
+        <div id="anvil-promo-banner" class="anvil-promo-collapsed" style="margin-bottom: 30px; padding: 12px 20px; background: rgba(0, 212, 255, 0.05); border-radius: 6px; border: 1px solid rgba(0, 212, 255, 0.2); cursor: pointer; transition: all 0.3s ease; overflow: hidden;" onclick="toggleAnvilPromo()">
+            <!-- Collapsed State -->
+            <div id="anvil-collapsed" style="display: flex; align-items: center; gap: 15px;">
+                <div class="anvil-icon" style="font-size: 28px; line-height: 1; animation: anvil-pulse 2s ease-in-out infinite;">🔨</div>
+                <div style="flex: 1;">
+                    <div style="font-size: 14px; font-weight: 600; color: #00d4ff;">Ready to build on Cardano?</div>
+                </div>
+                <div style="color: #00d4ff; font-size: 20px; transition: transform 0.3s ease;" id="anvil-arrow">›</div>
+            </div>
+
+            <!-- Expanded State -->
+            <div id="anvil-expanded" style="display: none; padding-top: 15px; border-top: 1px solid rgba(0, 212, 255, 0.2); margin-top: 15px;">
+                <div style="margin-bottom: 15px; color: #b8b8b8; font-size: 14px; line-height: 1.6;">
+                    Check out the <strong style="color: #00d4ff;">Anvil API</strong> — Get a free API key and unlock your inner blockchain builder.
+                </div>
+                <a href="https://ada-anvil.io/services/api" target="_blank" style="display: inline-block; padding: 10px 20px; background: linear-gradient(135deg, #00ff41 0%, #00d4ff 100%); color: #000; font-weight: 700; font-size: 13px; border-radius: 6px; text-decoration: none; box-shadow: 0 4px 10px rgba(0, 255, 65, 0.2); transition: all 0.2s ease;" onclick="event.stopPropagation();" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 15px rgba(0, 255, 65, 0.3)';" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 10px rgba(0, 255, 65, 0.2)';">
+                    Get Started →
+                </a>
+                <div style="margin-top: 12px; font-size: 11px; color: #666; font-style: italic;">
+                    Umbrella Mines is a Pb Project, not an official Anvil product.
+                </div>
+            </div>
+        </div>
+
+        <script>
+        function toggleAnvilPromo() {
+            const banner = document.getElementById('anvil-promo-banner');
+            const collapsed = document.getElementById('anvil-collapsed');
+            const expanded = document.getElementById('anvil-expanded');
+            const arrow = document.getElementById('anvil-arrow');
+
+            if (banner.classList.contains('anvil-promo-collapsed')) {
+                // Expand
+                banner.classList.remove('anvil-promo-collapsed');
+                banner.classList.add('anvil-promo-expanded');
+                banner.style.background = 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)';
+                banner.style.borderColor = 'rgba(0, 255, 65, 0.3)';
+                banner.style.padding = '20px 25px';
+                banner.style.boxShadow = '0 4px 15px rgba(0, 255, 65, 0.1)';
+                expanded.style.display = 'block';
+                arrow.style.transform = 'rotate(90deg)';
+            } else {
+                // Collapse
+                banner.classList.remove('anvil-promo-expanded');
+                banner.classList.add('anvil-promo-collapsed');
+                banner.style.background = 'rgba(0, 212, 255, 0.05)';
+                banner.style.borderColor = 'rgba(0, 212, 255, 0.2)';
+                banner.style.padding = '12px 20px';
+                banner.style.boxShadow = 'none';
+                expanded.style.display = 'none';
+                arrow.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        // Merge pagination
+        let currentMergePage = 1;
+        const totalMergePages = <?php echo $stats['merge_total_pages']; ?>;
+        const totalMerges = <?php echo $stats['total_merges']; ?>;
+
+        function loadMergePage(page) {
+            if (page < 1 || page > totalMergePages) return;
+
+            currentMergePage = page;
+
+            // Update UI immediately
+            updateMergePaginationUI();
+
+            // Fetch new data
+            jQuery.post(ajaxurl, {
+                action: 'umbrella_load_merge_page',
+                page: page,
+                nonce: '<?php echo wp_create_nonce('umbrella_merge_pagination'); ?>'
+            }, function(response) {
+                if (response.success) {
+                    // Update table content
+                    updateMergeTable(response.data.merges);
+                }
+            });
+        }
+
+        function updateMergePaginationUI() {
+            const perPage = 10;
+            const start = ((currentMergePage - 1) * perPage) + 1;
+            const end = Math.min(currentMergePage * perPage, totalMerges);
+
+            // Update info text
+            jQuery('#merge-page-info').text(`Showing ${start}-${end} of ${totalMerges} merges`);
+
+            // Rebuild page buttons with sliding window (shows 5 pages max, centered)
+            const buttonContainer = jQuery('#merge-page-buttons');
+            buttonContainer.empty();
+
+            // Previous button
+            const prevBtn = jQuery('<button>')
+                .addClass('button button-small merge-prev-btn')
+                .text('← Previous')
+                .prop('disabled', currentMergePage <= 1)
+                .css({
+                    'background': 'rgba(0, 212, 255, 0.1)',
+                    'color': currentMergePage <= 1 ? '#666' : '#00d4ff',
+                    'border-color': 'rgba(0, 212, 255, 0.3)',
+                    'opacity': currentMergePage <= 1 ? '0.5' : '1'
+                })
+                .on('click', function() { if (currentMergePage > 1) loadMergePage(currentMergePage - 1); });
+            buttonContainer.append(prevBtn);
+
+            // Page number buttons (sliding window)
+            const maxButtons = 5;
+            let startPage = Math.max(1, currentMergePage - Math.floor(maxButtons / 2));
+            let endPage = Math.min(totalMergePages, startPage + maxButtons - 1);
+
+            // Adjust if we're near the end
+            if (endPage - startPage < maxButtons - 1) {
+                startPage = Math.max(1, endPage - maxButtons + 1);
+            }
+
+            for (let i = startPage; i <= endPage; i++) {
+                const isActive = i === currentMergePage;
+                const pageBtn = jQuery('<button>')
+                    .addClass('button button-small merge-page-btn')
+                    .text(i)
+                    .attr('data-page', i)
+                    .css({
+                        'background': isActive ? 'linear-gradient(135deg, #00ff41 0%, #00d4ff 100%)' : 'rgba(0, 212, 255, 0.05)',
+                        'color': isActive ? '#000' : '#00d4ff',
+                        'border': isActive ? 'none' : '1px solid rgba(0, 212, 255, 0.2)',
+                        'font-weight': isActive ? '700' : 'normal'
+                    })
+                    .on('click', function() { loadMergePage(i); });
+                buttonContainer.append(pageBtn);
+            }
+
+            // Next button
+            const nextBtn = jQuery('<button>')
+                .addClass('button button-small merge-next-btn')
+                .text('Next →')
+                .prop('disabled', currentMergePage >= totalMergePages)
+                .css({
+                    'background': 'rgba(0, 212, 255, 0.1)',
+                    'color': currentMergePage >= totalMergePages ? '#666' : '#00d4ff',
+                    'border-color': 'rgba(0, 212, 255, 0.3)',
+                    'opacity': currentMergePage >= totalMergePages ? '0.5' : '1'
+                })
+                .on('click', function() { if (currentMergePage < totalMergePages) loadMergePage(currentMergePage + 1); });
+            buttonContainer.append(nextBtn);
+        }
+
+        function updateMergeTable(merges) {
+            const tbody = jQuery('.merge-history-table tbody');
+            tbody.empty();
+
+            merges.forEach(function(merge) {
+                const row = `
+                    <tr>
+                        <td><code>${merge.original_address.substring(0, 20)}...</code></td>
+                        <td>${merge.solutions_consolidated} solutions</td>
+                        <td>
+                            <span class="status-badge status-${merge.status}">
+                                ${merge.status}
+                            </span>
+                        </td>
+                        <td>${merge.time_ago} ago</td>
+                        <td>
+                            <a href="#" class="button button-small view-merge" data-merge-id="${merge.id}">View</a>
+                        </td>
+                    </tr>
+                `;
+                tbody.append(row);
+            });
+        }
+        </script>
+
         <!-- Merge Progress Container -->
         <div id="merge-all-progress" style="display: none; margin-bottom: 30px; padding: 24px; background: rgba(0, 255, 65, 0.05); border: 2px solid rgba(0, 255, 65, 0.2); border-radius: 8px;">
             <div style="font-size: 16px; color: #00ff41; font-weight: 600; margin-bottom: 16px; letter-spacing: 1px;">
@@ -1733,7 +1930,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach (array_slice($stats['merge_history'], 0, 10) as $merge): ?>
+                    <?php foreach ($stats['merge_history'] as $merge): ?>
                         <tr>
                             <td><code><?php echo esc_html(substr($merge->original_address, 0, 20)); ?>...</code></td>
                             <td><?php echo (int) $merge->solutions_consolidated; ?> solutions</td>
@@ -1750,6 +1947,25 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                     <?php endforeach; ?>
                 </tbody>
             </table>
+
+            <!-- Pagination Controls -->
+            <?php if ($stats['merge_total_pages'] > 1): ?>
+                <div class="merge-pagination" style="margin-top: 25px; display: flex; align-items: center; justify-content: space-between; padding: 20px; background: rgba(0, 212, 255, 0.03); border-radius: 6px; border: 1px solid rgba(0, 212, 255, 0.1);">
+                    <div id="merge-page-info" style="color: #999; font-size: 13px;">
+                        Showing 1-<?php echo min(10, $stats['total_merges']); ?> of <?php echo $stats['total_merges']; ?> merges
+                    </div>
+                    <div id="merge-page-buttons" style="display: flex; gap: 8px; align-items: center;">
+                        <!-- Buttons will be populated by JavaScript -->
+                    </div>
+                </div>
+
+                <script>
+                // Initialize pagination on page load
+                jQuery(document).ready(function() {
+                    updateMergePaginationUI();
+                });
+                </script>
+            <?php endif; ?>
         <?php else: ?>
             <div style="text-align: center; padding: 60px 20px; color: #666;">
                 <div style="font-size: 48px; margin-bottom: 16px; opacity: 0.3;">🔀</div>
