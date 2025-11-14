@@ -356,6 +356,67 @@ $status_counts = $wpdb->get_results("
     background: rgba(255, 51, 102, 0.3) !important;
     transform: rotate(90deg);
 }
+
+/* Keep table headers from going vertical */
+table.wp-list-table th {
+    white-space: nowrap;
+}
+
+/* Make payout wallet grey box more compact */
+table.wp-list-table td > div[style*="PAYOUT WALLET"] {
+    padding: 4px 8px !important;
+    font-size: 10px !important;
+    white-space: nowrap !important;
+}
+
+/* Stack action buttons vertically and truncate addresses on smaller screens */
+@media (max-width: 1600px) {
+    table.wp-list-table td:last-child > div {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 4px !important;
+    }
+
+    table.wp-list-table td:last-child .button {
+        width: 100%;
+        text-align: center;
+        font-size: 11px;
+        padding: 4px 8px;
+    }
+
+    /* Make actions column narrower when stacked */
+    table.wp-list-table th:last-child,
+    table.wp-list-table td:last-child {
+        width: 100px !important;
+        min-width: 100px;
+    }
+
+    /* Truncate address with ellipsis */
+    table.wp-list-table td:nth-child(3) {
+        max-width: 150px;
+    }
+
+    table.wp-list-table td:nth-child(3) code {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: pointer;
+    }
+
+    /* Show full address on hover */
+    table.wp-list-table td:nth-child(3) code:hover {
+        overflow: visible;
+        white-space: normal;
+        word-break: break-all;
+        background: #fff;
+        padding: 4px;
+        border-radius: 3px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        position: relative;
+        z-index: 100;
+    }
+}
 </style>
 
 <script>

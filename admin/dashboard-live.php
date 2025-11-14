@@ -231,6 +231,96 @@ if (file_exists($log_file)) {
         </div>
     </div>
 
+    <!-- Payout Wallet Statistics -->
+    <?php
+    require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-merge-processor.php';
+    $all_payout_stats = Umbrella_Mines_Merge_Processor::get_payout_wallet_stats();
+    if (count($all_payout_stats) > 0):
+        $primary_payout = $all_payout_stats[0]; // First one (most merged wallets)
+        $other_payouts = array_slice($all_payout_stats, 1); // Rest
+    ?>
+    <div class="payout-stats-container">
+        <div class="payout-stats-header">
+            <span class="payout-stats-title">PAYOUT WALLET STATISTICS</span>
+            <?php if (count($other_payouts) > 0): ?>
+                <span class="payout-count-badge"><?php echo count($all_payout_stats); ?> total</span>
+            <?php endif; ?>
+        </div>
+
+        <!-- Primary Payout Wallet -->
+        <div class="payout-stat-card primary">
+            <div class="payout-address-header">
+                <span class="payout-icon">💰</span>
+                <div class="payout-address-info">
+                    <div class="payout-label">PRIMARY PAYOUT ADDRESS</div>
+                    <code class="payout-address"><?php echo esc_html($primary_payout['payout_address']); ?></code>
+                    <?php if (isset($primary_payout['last_merge_at'])): ?>
+                        <div class="payout-last-merge">Last merge: <?php echo esc_html(date('M j, Y g:i A', strtotime($primary_payout['last_merge_at']))); ?></div>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div class="payout-metrics-grid">
+                <div class="payout-metric wallets">
+                    <div class="metric-label">Total Merged Wallets</div>
+                    <div class="metric-value"><?php echo number_format($primary_payout['total_merged_wallets']); ?></div>
+                    <div class="metric-sublabel">Wallets consolidated</div>
+                </div>
+                <div class="payout-metric solutions">
+                    <div class="metric-label">Total Merged Solutions</div>
+                    <div class="metric-value"><?php echo number_format($primary_payout['total_merged_solutions']); ?></div>
+                    <div class="metric-sublabel">Solutions accumulated</div>
+                </div>
+                <div class="payout-metric average">
+                    <div class="metric-label">Average Per Wallet</div>
+                    <div class="metric-value"><?php echo number_format($primary_payout['total_merged_solutions'] / $primary_payout['total_merged_wallets'], 1); ?></div>
+                    <div class="metric-sublabel">Solutions per wallet</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Other Payout Wallets (Collapsible) -->
+        <?php if (count($other_payouts) > 0): ?>
+        <div class="other-payouts-toggle" onclick="jQuery('#other-payouts').slideToggle(200); jQuery('.toggle-arrow').toggleClass('open');">
+            <span class="toggle-arrow">▶</span>
+            <span class="toggle-text">Show <?php echo count($other_payouts); ?> other payout wallet<?php echo count($other_payouts) > 1 ? 's' : ''; ?></span>
+        </div>
+        <div id="other-payouts" style="display: none;">
+            <?php foreach ($other_payouts as $payout_stats): ?>
+            <div class="payout-stat-card">
+                <div class="payout-address-header">
+                    <span class="payout-icon">💵</span>
+                    <div class="payout-address-info">
+                        <div class="payout-label">HISTORICAL PAYOUT ADDRESS</div>
+                        <code class="payout-address"><?php echo esc_html($payout_stats['payout_address']); ?></code>
+                        <?php if (isset($payout_stats['last_merge_at'])): ?>
+                            <div class="payout-last-merge">Last merge: <?php echo esc_html(date('M j, Y g:i A', strtotime($payout_stats['last_merge_at']))); ?></div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <div class="payout-metrics-grid">
+                    <div class="payout-metric wallets">
+                        <div class="metric-label">Total Merged Wallets</div>
+                        <div class="metric-value"><?php echo number_format($payout_stats['total_merged_wallets']); ?></div>
+                        <div class="metric-sublabel">Wallets consolidated</div>
+                    </div>
+                    <div class="payout-metric solutions">
+                        <div class="metric-label">Total Merged Solutions</div>
+                        <div class="metric-value"><?php echo number_format($payout_stats['total_merged_solutions']); ?></div>
+                        <div class="metric-sublabel">Solutions accumulated</div>
+                    </div>
+                    <div class="payout-metric average">
+                        <div class="metric-label">Average Per Wallet</div>
+                        <div class="metric-value"><?php echo number_format($payout_stats['total_merged_solutions'] / $payout_stats['total_merged_wallets'], 1); ?></div>
+                        <div class="metric-sublabel">Solutions per wallet</div>
+                    </div>
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+
     <!-- System Requirements Check -->
     <?php if (!empty($system_checks) && !$all_requirements_met): ?>
     <div class="system-requirements-alert">
@@ -836,6 +926,197 @@ jQuery(document).ready(function($) {
         font-size: 12px;
         color: #666;
         letter-spacing: 0.5px;
+    }
+
+    /* Payout Wallet Statistics */
+    .payout-stats-container {
+        background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
+        border: 1px solid #2a3f5f;
+        border-radius: 8px;
+        margin-bottom: 30px;
+        overflow: hidden;
+    }
+
+    .payout-stats-header {
+        padding: 15px 25px;
+        background: rgba(0, 255, 65, 0.05);
+        border-bottom: 1px solid #2a3f5f;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .payout-stats-title {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 2px;
+        color: #00ff41;
+    }
+
+    .payout-count-badge {
+        font-size: 10px;
+        font-weight: 700;
+        color: #00d4ff;
+        background: rgba(0, 212, 255, 0.1);
+        padding: 4px 10px;
+        border-radius: 4px;
+        border: 1px solid rgba(0, 212, 255, 0.3);
+        letter-spacing: 1px;
+    }
+
+    .payout-stat-card {
+        padding: 25px;
+        border-bottom: 1px solid #2a3f5f;
+    }
+
+    .payout-stat-card:last-child {
+        border-bottom: none;
+    }
+
+    .payout-address-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+
+    .payout-icon {
+        font-size: 32px;
+        line-height: 1;
+    }
+
+    .payout-address-info {
+        flex: 1;
+    }
+
+    .payout-label {
+        font-size: 10px;
+        font-weight: 600;
+        color: #00ff41;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 6px;
+    }
+
+    .payout-address {
+        display: block;
+        font-size: 12px;
+        color: #00d4ff;
+        font-family: 'Courier New', monospace;
+        background: rgba(0, 212, 255, 0.05);
+        padding: 6px 10px;
+        border-radius: 4px;
+        border: 1px solid rgba(0, 212, 255, 0.2);
+        margin-bottom: 6px;
+    }
+
+    .payout-last-merge {
+        font-size: 11px;
+        color: #666;
+        letter-spacing: 0.5px;
+    }
+
+    .payout-metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+    }
+
+    .payout-metric {
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid #2a3f5f;
+        border-radius: 6px;
+        padding: 16px;
+        transition: all 0.3s ease;
+    }
+
+    .payout-metric:hover {
+        transform: translateY(-2px);
+        border-color: #00ff41;
+        box-shadow: 0 0 20px rgba(0, 255, 65, 0.1);
+    }
+
+    .payout-metric.wallets {
+        border-left: 3px solid #00ff41;
+    }
+
+    .payout-metric.solutions {
+        border-left: 3px solid #00d4ff;
+    }
+
+    .payout-metric.average {
+        border-left: 3px solid #ffaa00;
+    }
+
+    .metric-label {
+        font-size: 10px;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 10px;
+    }
+
+    .metric-value {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 6px;
+        line-height: 1;
+    }
+
+    .payout-metric.wallets .metric-value {
+        color: #00ff41;
+    }
+
+    .payout-metric.solutions .metric-value {
+        color: #00d4ff;
+    }
+
+    .payout-metric.average .metric-value {
+        color: #ffaa00;
+    }
+
+    .metric-sublabel {
+        font-size: 11px;
+        color: #666;
+    }
+
+    .other-payouts-toggle {
+        padding: 15px 25px;
+        background: rgba(0, 212, 255, 0.03);
+        border-bottom: 1px solid #2a3f5f;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        transition: all 0.3s ease;
+        user-select: none;
+    }
+
+    .other-payouts-toggle:hover {
+        background: rgba(0, 212, 255, 0.08);
+    }
+
+    .toggle-arrow {
+        font-size: 10px;
+        color: #00d4ff;
+        transition: transform 0.2s ease;
+        display: inline-block;
+    }
+
+    .toggle-arrow.open {
+        transform: rotate(90deg);
+    }
+
+    .toggle-text {
+        font-size: 11px;
+        font-weight: 600;
+        color: #00d4ff;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+    }
+
+    .payout-stat-card.primary {
+        background: rgba(0, 255, 65, 0.02);
     }
 
     /* Public Display Card */

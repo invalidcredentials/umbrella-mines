@@ -5,6 +5,99 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.69] - 2025-01-13
+
+### Added
+
+#### Umbrella Mines JSON Import Support
+- **Import from other Umbrella Mines instances** - Import wallets + solutions from other Umbrella Mines installations via JSON export files
+- **Automatic payout wallet filtering** - Skips all payout wallets from PAYOUT_WALLET section to prevent daisy-chaining between instances
+- **Duplicate detection** - Automatically skips wallets that have already been successfully merged to prevent redundant API calls
+- **NIGHT calculation compatibility** - Uses same challenge ID parsing logic as Night Miner imports for accurate NIGHT estimation
+- **Import preview UI** - Shows wallet count, skipped duplicates count, and excluded payout wallets before import confirmation
+
+#### Session-Based Chunked Merge Processing
+- **20-wallet chunks** - Processes merges in batches of 20 to avoid 60-second server timeout (was timing out after ~60 wallets)
+- **Real-time progress tracking** - Displays accurate progress like "Chunk 3/22 complete - 60/435 wallets merged (13.8%)" instead of fake 0% → 90% → 100%
+- **Automatic resume capability** - Database-backed sessions automatically recover from server hiccups or timeouts
+- **Live success/fail counters** - Real-time display of successful merges, failed merges, and total processed
+- **Database session management** - New `umbrella_mining_merge_sessions` table tracks progress, wallet IDs, and status
+
+#### Enhanced Export System for Instance Transfer
+- **Complete payout wallet export** - Exports ALL payout wallets (active, imported, historical) in dedicated PAYOUT_WALLET section
+- **Clearly marked payout addresses** - Payout wallets flagged with status (ACTIVE/IMPORTED/HISTORICAL) to prevent accidental import
+- **Import compatibility** - JSON structure designed for seamless import into other Umbrella Mines instances
+- **Anti-daisy-chain protection** - Import system uses PAYOUT_WALLET section to filter out payout addresses
+
+#### Payout Wallet Statistics Dashboard
+- **Lifetime merge statistics** - Added comprehensive stats display to both Dashboard and Merge Addresses pages
+- **Per-wallet breakdown** - Shows total merged wallets, total merged solutions, average per wallet, last merge timestamp
+- **Collapsible historical wallets** - Primary payout wallet shown by default, others hidden in expandable section
+- **Beautiful gradient UI** - Matrix-themed cards with green/cyan gradients matching plugin design
+- **Database query optimization** - New `get_payout_wallet_stats()` method queries merge history efficiently
+
+### Improved
+
+#### Merge Addresses Page UX
+- **Fixed View button on AJAX pages** - View button now works on pages 2, 3, etc. (was only working on page 1 after refresh)
+- **Delegated event binding** - Changed from direct `.on('click')` to `$(document).on('click')` for dynamically-loaded rows
+- **Smooth AJAX pagination** - All merge row interactions work consistently across paginated results
+
+#### Solutions Page Responsive Design
+- **Action button stacking** - Buttons stack vertically on screens < 1600px instead of overflowing horizontally
+- **Compact actions column** - Actions column shrinks to 100px width when buttons are stacked (was 350px)
+- **Address truncation with ellipsis** - Long addresses show "addr1q8h3as..." with full address on hover popup
+- **Compact payout wallet indicator** - Grey "PAYOUT WALLET" box uses smaller padding and font on small screens
+- **No more vertical text** - Table headers stay horizontal at all screen sizes with `white-space: nowrap`
+- **Responsive breakpoints** - Optimized for 13", 15" laptops and tablets without layout breakage
+
+### Fixed
+- **Server timeout on bulk merge** - Chunked processing prevents 60-second PHP execution timeout when merging hundreds of wallets
+- **Lost merge progress** - Session system preserves progress and allows resumption after timeout or server hiccup
+- **Inaccurate progress bar** - Replaced fake animated progress with real chunk-based tracking
+- **View button AJAX issue** - Fixed event binding to work on dynamically-loaded pagination pages
+- **Address vertical explosion** - Fixed addresses going character-by-character vertically on small screens
+- **Grey box overflow** - Payout wallet indicator now scales properly on all screen sizes
+
+### Technical Details
+
+**New Database Tables:**
+- `wp_umbrella_mining_merge_sessions` - Tracks chunked merge progress (session_key, payout_address, total_wallets, processed_wallets, successful_count, wallet_ids_json, status)
+
+**New Methods:**
+- `Umbrella_Mines_Merge_Processor::create_merge_session()` - Creates database session for chunked merge
+- `Umbrella_Mines_Merge_Processor::process_merge_chunk()` - Processes 20 wallets per chunk via AJAX
+- `Umbrella_Mines_Merge_Processor::get_payout_wallet_stats()` - Queries lifetime merge statistics per payout address
+- `ajax_parse_umbrella_json()` - Parses Umbrella Mines JSON exports with payout filtering and duplicate detection
+
+**New AJAX Endpoints:**
+- `umbrella_create_merge_session` - Initializes chunked merge operation
+- `umbrella_process_merge_chunk` - Processes next 20 wallets in merge queue
+- `umbrella_get_merge_session_status` - Retrieves current merge progress
+- `umbrella_parse_umbrella_json` - Validates and parses Umbrella Mines JSON imports
+
+**Files Modified:**
+- `umbrella-mines.php` - Version bump to 0.4.20.69, AJAX handler registration, merge sessions table schema
+- `includes/class-merge-processor.php` - Chunked merge methods, stats query, improved error handling
+- `includes/class-import-processor.php` - Made `calculate_night_estimate_from_challenges()` public for JSON import
+- `admin/merge-addresses.php` - Chunked merge UI, import preview enhancements, payout stats display, View button fix
+- `admin/dashboard-live.php` - Payout wallet statistics with collapsible section for historical wallets
+- `admin/solutions.php` - Responsive CSS for action buttons, address truncation, compact payout indicator
+- `README.md` - Version badge updated to 0.4.20.69
+
+**Performance Improvements:**
+- Merge operations complete in <10 seconds per chunk instead of timing out after 60 seconds
+- Database sessions enable resumption without re-processing completed wallets
+- Statistics queries use indexed columns for fast retrieval
+
+**User Experience Wins:**
+- "it even froze (server hiccup) and restarted perfectly by design" - User feedback on resume capability
+- "its smooth af now" - User feedback on AJAX pagination fix
+- "the status bar works GREAT nice work on that" - User feedback on real progress tracking
+- "THIS IS FUCKING FIRE" - User feedback on collapsible payout wallet stats
+
+---
+
 ## [0.4.20.68] - 2025-01-12
 
 ### Fixed

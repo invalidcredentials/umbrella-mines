@@ -972,4 +972,53 @@ class Umbrella_Mines_Merge_Processor {
 
         return $session ? (array) $session : false;
     }
+
+    /**
+     * Get payout wallet statistics
+     *
+     * @param string $payout_address Optional specific payout address (if null, gets all)
+     * @return array Statistics for payout wallet(s)
+     */
+    public static function get_payout_wallet_stats($payout_address = null) {
+        global $wpdb;
+        $merges_table = $wpdb->prefix . 'umbrella_mining_merges';
+
+        if ($payout_address) {
+            // Get stats for specific payout wallet
+            $stats = $wpdb->get_row($wpdb->prepare("
+                SELECT
+                    payout_address,
+                    COUNT(*) as total_merged_wallets,
+                    SUM(solutions_consolidated) as total_merged_solutions
+                FROM {$merges_table}
+                WHERE payout_address = %s AND status = 'success'
+                GROUP BY payout_address
+            ", $payout_address), ARRAY_A);
+
+            if (!$stats) {
+                return array(
+                    'payout_address' => $payout_address,
+                    'total_merged_wallets' => 0,
+                    'total_merged_solutions' => 0
+                );
+            }
+
+            return $stats;
+        } else {
+            // Get stats for all payout wallets
+            $stats = $wpdb->get_results("
+                SELECT
+                    payout_address,
+                    COUNT(*) as total_merged_wallets,
+                    SUM(solutions_consolidated) as total_merged_solutions,
+                    MAX(merged_at) as last_merge_at
+                FROM {$merges_table}
+                WHERE status = 'success'
+                GROUP BY payout_address
+                ORDER BY total_merged_solutions DESC
+            ", ARRAY_A);
+
+            return $stats ? $stats : array();
+        }
+    }
 }

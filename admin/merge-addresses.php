@@ -1768,6 +1768,39 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
             </div>
         </div>
 
+        <?php
+        // Get payout wallet statistics
+        $payout_stats = Umbrella_Mines_Merge_Processor::get_payout_wallet_stats($payout_wallet->address);
+        if ($payout_stats['total_merged_wallets'] > 0):
+        ?>
+        <div style="background: linear-gradient(135deg, rgba(0, 255, 65, 0.05) 0%, rgba(0, 212, 255, 0.05) 100%); border: 2px solid rgba(0, 255, 65, 0.3); border-radius: 12px; padding: 24px; margin-bottom: 30px;">
+            <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 20px;">
+                <div style="font-size: 32px;">📊</div>
+                <div>
+                    <h3 style="margin: 0; color: #00ff41; font-size: 18px; letter-spacing: 0.5px;">PAYOUT WALLET STATISTICS</h3>
+                    <p style="margin: 4px 0 0 0; color: #888; font-size: 13px;">Lifetime merge statistics for this payout address</p>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                <div style="background: rgba(0, 255, 65, 0.05); border: 1px solid rgba(0, 255, 65, 0.2); border-radius: 8px; padding: 16px;">
+                    <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Total Merged Wallets</div>
+                    <div style="font-size: 28px; font-weight: 700; color: #00ff41;"><?php echo number_format($payout_stats['total_merged_wallets']); ?></div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">Wallets consolidated</div>
+                </div>
+                <div style="background: rgba(0, 212, 255, 0.05); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 8px; padding: 16px;">
+                    <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Total Merged Solutions</div>
+                    <div style="font-size: 28px; font-weight: 700; color: #00d4ff;"><?php echo number_format($payout_stats['total_merged_solutions']); ?></div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">Solutions accumulated</div>
+                </div>
+                <div style="background: rgba(255, 170, 0, 0.05); border: 1px solid rgba(255, 170, 0, 0.2); border-radius: 8px; padding: 16px;">
+                    <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Average Per Wallet</div>
+                    <div style="font-size: 28px; font-weight: 700; color: #ffaa00;"><?php echo number_format($payout_stats['total_merged_solutions'] / $payout_stats['total_merged_wallets'], 1); ?></div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">Solutions per wallet</div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <div class="page-actions" style="margin-bottom: 30px; display: flex; gap: 12px;">
             <?php if ($stats['eligible_wallets'] > 0): ?>
                 <button type="button" id="merge-all-btn" class="button button-primary" onclick="mergeAllWallets()">

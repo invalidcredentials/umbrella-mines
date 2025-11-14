@@ -186,6 +186,50 @@ $active_processes = $wpdb->get_results("
         </div>
     </div>
 
+    <!-- Payout Wallet Statistics -->
+    <?php
+    require_once plugin_dir_path(dirname(__FILE__)) . 'includes/class-merge-processor.php';
+    $all_payout_stats = Umbrella_Mines_Merge_Processor::get_payout_wallet_stats();
+    if (count($all_payout_stats) > 0):
+    ?>
+    <div class="card">
+        <h2>📊 Payout Wallet Statistics</h2>
+        <p style="margin-bottom: 20px; color: #666;">Lifetime merge statistics for all payout wallets</p>
+
+        <?php foreach ($all_payout_stats as $payout_stats): ?>
+        <div style="background: linear-gradient(135deg, rgba(0, 255, 65, 0.05) 0%, rgba(0, 212, 255, 0.05) 100%); border: 2px solid rgba(0, 255, 65, 0.3); border-radius: 12px; padding: 24px; margin-bottom: 16px;">
+            <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 20px;">
+                <div style="font-size: 32px;">💰</div>
+                <div>
+                    <h3 style="margin: 0; color: #00ff41; font-size: 14px; letter-spacing: 0.5px;">PAYOUT ADDRESS</h3>
+                    <code style="font-size: 12px; color: #888; font-family: monospace;"><?php echo esc_html($payout_stats['payout_address']); ?></code>
+                    <?php if (isset($payout_stats['last_merge_at'])): ?>
+                        <p style="margin: 4px 0 0 0; color: #666; font-size: 12px;">Last merge: <?php echo esc_html(date('M j, Y g:i A', strtotime($payout_stats['last_merge_at']))); ?></p>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                <div style="background: rgba(0, 255, 65, 0.05); border: 1px solid rgba(0, 255, 65, 0.2); border-radius: 8px; padding: 16px;">
+                    <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Total Merged Wallets</div>
+                    <div style="font-size: 28px; font-weight: 700; color: #00ff41;"><?php echo number_format($payout_stats['total_merged_wallets']); ?></div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">Wallets consolidated</div>
+                </div>
+                <div style="background: rgba(0, 212, 255, 0.05); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 8px; padding: 16px;">
+                    <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Total Merged Solutions</div>
+                    <div style="font-size: 28px; font-weight: 700; color: #00d4ff;"><?php echo number_format($payout_stats['total_merged_solutions']); ?></div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">Solutions accumulated</div>
+                </div>
+                <div style="background: rgba(255, 170, 0, 0.05); border: 1px solid rgba(255, 170, 0, 0.2); border-radius: 8px; padding: 16px;">
+                    <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Average Per Wallet</div>
+                    <div style="font-size: 28px; font-weight: 700; color: #ffaa00;"><?php echo number_format($payout_stats['total_merged_solutions'] / $payout_stats['total_merged_wallets'], 1); ?></div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">Solutions per wallet</div>
+                </div>
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+
     <!-- NIGHT Tracker -->
     <?php if ($current_challenge && $night_rates_cache): ?>
     <div class="card night-tracker">
