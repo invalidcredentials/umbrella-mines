@@ -785,4 +785,191 @@ class Umbrella_Mines_Merge_Processor {
 
         return $decrypted;
     }
+
+    /**
+     * Create merge session for chunked processing
+     *
+     * @param string $network Network
+     * @return array Session data or error
+     */
+    public static function create_merge_session($network = 'mainnet') {
+        global $wpdb;
+        $sessions_table = $wpdb->prefix . 'umbrella_mining_merge_sessions';
+
+        // Get payout wallet
+        $payout_wallet = self::get_registered_payout_wallet($network);
+        if (!$payout_wallet) {
+            return ['success' => false, 'error' => 'No payout wallet available'];
+        }
+
+        // Get all eligible wallets
+        $eligible_wallets = self::get_eligible_wallets($network);
+        if (empty($eligible_wallets)) {
+            return ['success' => false, 'error' => 'No eligible wallets to merge'];
+        }
+
+        // Extract wallet IDs
+        $wallet_ids = array_map(function($w) { return $w->id; }, $eligible_wallets);
+
+        // Create session
+        $session_key = uniqid('merge_session_', true);
+        $wpdb->insert($sessions_table, [
+            'session_key' => $session_key,
+            'payout_address' => $payout_wallet->address,
+            'total_wallets' => count($wallet_ids),
+            'processed_wallets' => 0,
+            'successful_count' => 0,
+            'failed_count' => 0,
+            'already_assigned_count' => 0,
+            'wallet_ids_json' => json_encode($wallet_ids),
+            'status' => 'pending',
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql')
+        ]);
+
+        error_log("=== MERGE SESSION CREATED ===");
+        error_log("Session: $session_key");
+        error_log("Total wallets: " . count($wallet_ids));
+        error_log("Payout: {$payout_wallet->address}");
+
+        return [
+            'success' => true,
+            'session_key' => $session_key,
+            'total_wallets' => count($wallet_ids),
+            'payout_address' => $payout_wallet->address
+        ];
+    }
+
+    /**
+     * Process chunk of merge session
+     *
+     * @param string $session_key Session key
+     * @param int $chunk_size Number of wallets to process per chunk
+     * @return array Progress data
+     */
+    public static function process_merge_chunk($session_key, $chunk_size = 20) {
+        global $wpdb;
+        $sessions_table = $wpdb->prefix . 'umbrella_mining_merge_sessions';
+
+        // Get session
+        $session = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$sessions_table} WHERE session_key = %s",
+            $session_key
+        ));
+
+        if (!$session) {
+            return ['success' => false, 'error' => 'Session not found'];
+        }
+
+        // Parse wallet IDs
+        $all_wallet_ids = json_decode($session->wallet_ids_json, true);
+        $processed = (int) $session->processed_wallets;
+        $total = (int) $session->total_wallets;
+
+        // Check if complete
+        if ($processed >= $total) {
+            $wpdb->update($sessions_table, [
+                'status' => 'completed',
+                'completed_at' => current_time('mysql'),
+                'updated_at' => current_time('mysql')
+            ], ['session_key' => $session_key]);
+
+            return [
+                'success' => true,
+                'complete' => true,
+                'processed' => $processed,
+                'total' => $total,
+                'successful' => (int) $session->successful_count,
+                'failed' => (int) $session->failed_count,
+                'already_assigned' => (int) $session->already_assigned_count,
+                'progress_percent' => 100
+            ];
+        }
+
+        // Get next chunk of wallet IDs
+        $chunk_ids = array_slice($all_wallet_ids, $processed, $chunk_size);
+        $payout_address = $session->payout_address;
+
+        error_log("=== PROCESSING CHUNK ===");
+        error_log("Session: $session_key");
+        error_log("Chunk: " . ($processed + 1) . "-" . ($processed + count($chunk_ids)) . " of $total");
+
+        $successful = 0;
+        $failed = 0;
+        $already_assigned = 0;
+        $chunk_details = [];
+
+        foreach ($chunk_ids as $wallet_id) {
+            $result = self::merge_wallet($wallet_id, $payout_address);
+
+            if ($result['success']) {
+                if (isset($result['already_assigned']) && $result['already_assigned']) {
+                    $already_assigned++;
+                } else {
+                    $successful++;
+                }
+            } else {
+                $failed++;
+            }
+
+            $chunk_details[] = [
+                'wallet_id' => $wallet_id,
+                'status' => $result['success'] ? 'success' : 'failed',
+                'error' => $result['error'] ?? null
+            ];
+
+            // Rate limit
+            usleep(500000); // 0.5s between merges
+        }
+
+        // Update session
+        $new_processed = $processed + count($chunk_ids);
+        $new_successful = (int) $session->successful_count + $successful;
+        $new_failed = (int) $session->failed_count + $failed;
+        $new_already_assigned = (int) $session->already_assigned_count + $already_assigned;
+
+        $wpdb->update($sessions_table, [
+            'processed_wallets' => $new_processed,
+            'successful_count' => $new_successful,
+            'failed_count' => $new_failed,
+            'already_assigned_count' => $new_already_assigned,
+            'status' => 'processing',
+            'updated_at' => current_time('mysql')
+        ], ['session_key' => $session_key]);
+
+        $progress_percent = round(($new_processed / $total) * 100, 1);
+
+        error_log("Chunk complete: $successful successful, $failed failed, $already_assigned already assigned");
+        error_log("Progress: $new_processed/$total ($progress_percent%)");
+
+        return [
+            'success' => true,
+            'complete' => $new_processed >= $total,
+            'processed' => $new_processed,
+            'total' => $total,
+            'successful' => $new_successful,
+            'failed' => $new_failed,
+            'already_assigned' => $new_already_assigned,
+            'progress_percent' => $progress_percent,
+            'chunk_details' => $chunk_details
+        ];
+    }
+
+    /**
+     * Get merge session status
+     *
+     * @param string $session_key Session key
+     * @return array|false Session data or false
+     */
+    public static function get_merge_session($session_key) {
+        global $wpdb;
+        $sessions_table = $wpdb->prefix . 'umbrella_mining_merge_sessions';
+
+        $session = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$sessions_table} WHERE session_key = %s",
+            $session_key
+        ));
+
+        return $session ? (array) $session : false;
+    }
 }

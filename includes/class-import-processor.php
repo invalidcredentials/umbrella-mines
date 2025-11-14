@@ -196,7 +196,7 @@ class Umbrella_Mines_Import_Processor {
      * @param array $challenge_submissions Challenge submissions from wallet.json
      * @return array NIGHT estimate with breakdown by day
      */
-    private static function calculate_night_estimate_from_challenges($challenge_submissions) {
+    public static function calculate_night_estimate_from_challenges($challenge_submissions) {
         if (empty($challenge_submissions)) {
             return [
                 'total' => '0 NIGHT',

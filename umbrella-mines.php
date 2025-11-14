@@ -73,6 +73,9 @@ class Umbrella_Mines {
         add_action('wp_ajax_umbrella_export_payout_mnemonic', array($this, 'ajax_export_payout_mnemonic'));
         add_action('wp_ajax_umbrella_delete_payout_wallet', array($this, 'ajax_delete_payout_wallet'));
         add_action('wp_ajax_umbrella_merge_all_wallets', array($this, 'ajax_merge_all_wallets'));
+        add_action('wp_ajax_umbrella_create_merge_session', array($this, 'ajax_create_merge_session'));
+        add_action('wp_ajax_umbrella_process_merge_chunk', array($this, 'ajax_process_merge_chunk'));
+        add_action('wp_ajax_umbrella_get_merge_session_status', array($this, 'ajax_get_merge_session_status'));
         add_action('wp_ajax_umbrella_merge_single_wallet', array($this, 'ajax_merge_single_wallet'));
         add_action('wp_ajax_umbrella_export_all_merged', array($this, 'ajax_export_all_merged'));
         add_action('wp_ajax_get_merge_details', array($this, 'ajax_get_merge_details'));
@@ -82,6 +85,7 @@ class Umbrella_Mines {
 
         // Import solutions AJAX hooks
         add_action('wp_ajax_umbrella_parse_import_file', array($this, 'ajax_parse_import_file'));
+        add_action('wp_ajax_umbrella_parse_umbrella_json', array($this, 'ajax_parse_umbrella_json'));
         add_action('wp_ajax_umbrella_start_batch_merge', array($this, 'ajax_start_batch_merge'));
         add_action('wp_ajax_umbrella_get_merge_progress', array($this, 'ajax_get_merge_progress'));
         add_action('wp_ajax_umbrella_download_import_receipt', array($this, 'ajax_download_import_receipt'));
@@ -293,6 +297,47 @@ class Umbrella_Mines {
             KEY idx_wallet (original_wallet_id)
         ) $charset_collate;";
 
+        // Table 12: Import sessions (for Night Miner imports)
+        $table_import_sessions = $wpdb->prefix . 'umbrella_mining_import_sessions';
+        $sql_import_sessions = "CREATE TABLE {$table_import_sessions} (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            session_key varchar(100) NOT NULL,
+            payout_address varchar(255) NOT NULL,
+            total_wallets int NOT NULL,
+            processed_wallets int DEFAULT 0,
+            successful_count int DEFAULT 0,
+            failed_count int DEFAULT 0,
+            wallet_ids_json longtext NOT NULL,
+            status enum('pending','processing','completed','cancelled') DEFAULT 'pending',
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            completed_at datetime,
+            PRIMARY KEY (id),
+            UNIQUE KEY session_key (session_key),
+            KEY idx_status (status)
+        ) $charset_collate;";
+
+        // Table 13: Merge sessions (for chunked DB wallet merging)
+        $table_merge_sessions = $wpdb->prefix . 'umbrella_mining_merge_sessions';
+        $sql_merge_sessions = "CREATE TABLE {$table_merge_sessions} (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            session_key varchar(100) NOT NULL,
+            payout_address varchar(255) NOT NULL,
+            total_wallets int NOT NULL,
+            processed_wallets int DEFAULT 0,
+            successful_count int DEFAULT 0,
+            failed_count int DEFAULT 0,
+            already_assigned_count int DEFAULT 0,
+            wallet_ids_json longtext NOT NULL,
+            status enum('pending','processing','completed','cancelled') DEFAULT 'pending',
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            completed_at datetime,
+            PRIMARY KEY (id),
+            UNIQUE KEY session_key (session_key),
+            KEY idx_status (status)
+        ) $charset_collate;";
+
         // Create tables
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql_wallets);
@@ -306,6 +351,8 @@ class Umbrella_Mines {
         dbDelta($sql_night_rates);
         dbDelta($sql_payout_wallet);
         dbDelta($sql_merges);
+        dbDelta($sql_import_sessions);
+        dbDelta($sql_merge_sessions);
 
         // Set default config
         $this->set_default_config();
@@ -2039,15 +2086,17 @@ class Umbrella_Mines {
             ));
         }
 
-        // Get active payout wallet
+        // Get ALL payout wallets (current + imported + historical from merges)
         require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
         $network = get_option('umbrella_mines_network', 'mainnet');
         $payout_wallet = Umbrella_Mines_Merge_Processor::get_registered_payout_wallet($network);
 
-        // Prepare payout wallet info for export
-        $payout_wallet_export = null;
+        // Collect all payout wallets
+        $all_payout_wallets = array();
+        $payout_addresses_seen = array();
+
+        // 1. Current active payout wallet
         if ($payout_wallet) {
-            // Decrypt mnemonic
             $payout_mnemonic = '';
             if (!empty($payout_wallet->mnemonic_encrypted)) {
                 $payout_mnemonic = UmbrellaMines_EncryptionHelper::decrypt($payout_wallet->mnemonic_encrypted);
@@ -2056,28 +2105,104 @@ class Umbrella_Mines {
                 }
             }
 
-            // Check if it's imported (has wallet_name) or auto-selected
             $is_imported = property_exists($payout_wallet, 'wallet_name');
 
-            $payout_wallet_export = array(
-                '⭐_IMPORTANT' => '🔑 THIS IS YOUR PAYOUT WALLET - All merged rewards go here',
+            $all_payout_wallets[] = array(
+                'status' => 'ACTIVE',
                 'wallet_type' => $is_imported ? 'IMPORTED (User-provided)' : 'AUTO-SELECTED (From mining wallets)',
                 'address' => $payout_wallet->address,
-                'mnemonic' => $payout_mnemonic, // 🔐 CRITICAL - Full 24-word phrase
+                'mnemonic' => $payout_mnemonic,
                 'payment_skey_extended' => property_exists($payout_wallet, 'payment_skey_extended') ? $payout_wallet->payment_skey_extended : (property_exists($payout_wallet, 'payment_skey_extended_encrypted') ? '[ENCRYPTED - Use mnemonic to recover]' : null),
                 'payment_pkey' => $payout_wallet->payment_pkey,
                 'payment_keyhash' => $payout_wallet->payment_keyhash,
                 'network' => $payout_wallet->network,
                 'created_at' => $payout_wallet->created_at,
+                'wallet_name' => $is_imported && property_exists($payout_wallet, 'wallet_name') ? $payout_wallet->wallet_name : null,
                 'cardanoscan_link' => $network === 'mainnet'
                     ? 'https://cardanoscan.io/address/' . $payout_wallet->address
                     : 'https://preprod.cardanoscan.io/address/' . $payout_wallet->address
             );
 
-            if ($is_imported && property_exists($payout_wallet, 'wallet_name')) {
-                $payout_wallet_export['wallet_name'] = $payout_wallet->wallet_name;
-            }
+            $payout_addresses_seen[$payout_wallet->address] = true;
         }
+
+        // 2. All imported payout wallets from payout_wallet table
+        $imported_payouts = $wpdb->get_results("
+            SELECT * FROM {$wpdb->prefix}umbrella_mining_payout_wallet
+            ORDER BY created_at DESC
+        ");
+
+        foreach ($imported_payouts as $imported) {
+            if (isset($payout_addresses_seen[$imported->address])) {
+                continue; // Skip if already added
+            }
+
+            $imported_mnemonic = '';
+            if (!empty($imported->mnemonic_encrypted)) {
+                $imported_mnemonic = UmbrellaMines_EncryptionHelper::decrypt($imported->mnemonic_encrypted);
+                if ($imported_mnemonic === false) {
+                    $imported_mnemonic = '[DECRYPTION_FAILED]';
+                }
+            }
+
+            $all_payout_wallets[] = array(
+                'status' => $imported->is_active ? 'ACTIVE' : 'INACTIVE',
+                'wallet_type' => 'IMPORTED (User-provided)',
+                'address' => $imported->address,
+                'mnemonic' => $imported_mnemonic,
+                'payment_skey_extended' => '[ENCRYPTED - Use mnemonic to recover]',
+                'payment_pkey' => $imported->payment_pkey,
+                'payment_keyhash' => $imported->payment_keyhash,
+                'network' => $imported->network,
+                'created_at' => $imported->created_at,
+                'wallet_name' => $imported->wallet_name,
+                'cardanoscan_link' => $network === 'mainnet'
+                    ? 'https://cardanoscan.io/address/' . $imported->address
+                    : 'https://preprod.cardanoscan.io/address/' . $imported->address
+            );
+
+            $payout_addresses_seen[$imported->address] = true;
+        }
+
+        // 3. All unique payout addresses from merge history
+        $historical_payout_addresses = $wpdb->get_col("
+            SELECT DISTINCT payout_address
+            FROM {$wpdb->prefix}umbrella_mining_merges
+            WHERE payout_address IS NOT NULL AND payout_address != ''
+        ");
+
+        foreach ($historical_payout_addresses as $hist_address) {
+            if (isset($payout_addresses_seen[$hist_address])) {
+                continue; // Skip if already added
+            }
+
+            $all_payout_wallets[] = array(
+                'status' => 'HISTORICAL (Used in merges)',
+                'wallet_type' => 'Unknown - Address only',
+                'address' => $hist_address,
+                'mnemonic' => '[NOT AVAILABLE - Historical reference only]',
+                'payment_skey_extended' => null,
+                'payment_pkey' => null,
+                'payment_keyhash' => null,
+                'network' => $network,
+                'created_at' => null,
+                'wallet_name' => null,
+                'cardanoscan_link' => $network === 'mainnet'
+                    ? 'https://cardanoscan.io/address/' . $hist_address
+                    : 'https://preprod.cardanoscan.io/address/' . $hist_address
+            );
+
+            $payout_addresses_seen[$hist_address] = true;
+        }
+
+        // Build payout wallets export structure
+        $payout_wallet_export = array(
+            '⭐_IMPORTANT' => '🔑 THESE ARE YOUR PAYOUT WALLETS - Do not import these as mining wallets to prevent daisy-chaining',
+            'total_payout_wallets' => count($all_payout_wallets),
+            'payout_wallets' => $all_payout_wallets
+        );
+
+        error_log('=== EXPORT: Including ' . count($all_payout_wallets) . ' payout wallet(s) for reference ===');
 
         // Build wallet-centric export structure (ONLY wallets with submitted/confirmed solutions)
         $export_data = array(
@@ -3190,6 +3315,83 @@ class Umbrella_Mines {
     }
 
     /**
+     * AJAX: Create merge session for chunked processing
+     */
+    public function ajax_create_merge_session() {
+        check_ajax_referer('umbrella_merge_wallets', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+
+        $network = get_option('umbrella_mines_network', 'mainnet');
+        $result = Umbrella_Mines_Merge_Processor::create_merge_session($network);
+
+        if (!$result['success']) {
+            wp_send_json_error($result['error']);
+        }
+
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX: Process chunk of merge session
+     */
+    public function ajax_process_merge_chunk() {
+        check_ajax_referer('umbrella_merge_wallets', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $session_key = isset($_POST['session_key']) ? sanitize_text_field($_POST['session_key']) : '';
+        $chunk_size = isset($_POST['chunk_size']) ? intval($_POST['chunk_size']) : 20;
+
+        if (empty($session_key)) {
+            wp_send_json_error('Session key required');
+        }
+
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+
+        $result = Umbrella_Mines_Merge_Processor::process_merge_chunk($session_key, $chunk_size);
+
+        if (!$result['success']) {
+            wp_send_json_error($result['error']);
+        }
+
+        wp_send_json_success($result);
+    }
+
+    /**
+     * AJAX: Get merge session status
+     */
+    public function ajax_get_merge_session_status() {
+        check_ajax_referer('umbrella_merge_wallets', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $session_key = isset($_POST['session_key']) ? sanitize_text_field($_POST['session_key']) : '';
+
+        if (empty($session_key)) {
+            wp_send_json_error('Session key required');
+        }
+
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+
+        $session = Umbrella_Mines_Merge_Processor::get_merge_session($session_key);
+
+        if (!$session) {
+            wp_send_json_error('Session not found');
+        }
+
+        wp_send_json_success($session);
+    }
+
+    /**
      * AJAX: Parse uploaded Night Miner export ZIP
      */
     public function ajax_parse_import_file() {
@@ -3410,6 +3612,197 @@ class Umbrella_Mines {
             wp_send_json_success(array('message' => 'Session cancelled'));
         } else {
             wp_send_json_error('Failed to cancel session');
+        }
+    }
+
+    /**
+     * Parse uploaded Umbrella Mines JSON export file
+     */
+    public function ajax_parse_umbrella_json() {
+        try {
+            check_ajax_referer('umbrella_mining', 'nonce');
+
+            if (!current_user_can('manage_options')) {
+                wp_send_json_error('Unauthorized');
+            }
+
+            // Check for uploaded file
+            if (!isset($_FILES['import_file']) || $_FILES['import_file']['error'] !== UPLOAD_ERR_OK) {
+                $error_code = isset($_FILES['import_file']['error']) ? $_FILES['import_file']['error'] : 'unknown';
+                wp_send_json_error('No file uploaded or upload error (code: ' . $error_code . ')');
+            }
+
+            $file = $_FILES['import_file'];
+
+        // Validate file type (check extension - MIME types vary by browser/OS)
+        $filename_lower = strtolower($file['name']);
+        if (substr($filename_lower, -5) !== '.json') {
+            wp_send_json_error('Invalid file type. Please upload a JSON file.');
+        }
+
+        // Validate file size (50MB max)
+        if ($file['size'] > 50 * 1024 * 1024) {
+            wp_send_json_error('File too large. Maximum size is 50MB.');
+        }
+
+        // Read and parse JSON
+        $json_content = file_get_contents($file['tmp_name']);
+        if ($json_content === false) {
+            wp_send_json_error('Failed to read uploaded file');
+        }
+
+        $import_data = json_decode($json_content, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            wp_send_json_error('Invalid JSON format: ' . json_last_error_msg());
+        }
+
+        // Validate JSON structure
+        if (!isset($import_data['wallets']) || !is_array($import_data['wallets'])) {
+            wp_send_json_error('Invalid Umbrella Mines export format: Missing wallets array');
+        }
+
+
+        // Extract all payout addresses to exclude
+        $payout_addresses_to_skip = array();
+
+        if (isset($import_data['PAYOUT_WALLET'])) {
+            // Handle both old format (single wallet) and new format (multiple wallets)
+            if (isset($import_data['PAYOUT_WALLET']['payout_wallets'])) {
+                // New format with multiple payout wallets
+                foreach ($import_data['PAYOUT_WALLET']['payout_wallets'] as $payout) {
+                    if (isset($payout['address'])) {
+                        $payout_addresses_to_skip[$payout['address']] = true;
+                    }
+                }
+            } elseif (isset($import_data['PAYOUT_WALLET']['address'])) {
+                // Old format with single wallet
+                $payout_addresses_to_skip[$import_data['PAYOUT_WALLET']['address']] = true;
+            }
+        }
+
+
+        // Get current payout wallet
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-merge-processor.php';
+        $network = get_option('umbrella_mines_network', 'mainnet');
+        $payout_wallet = Umbrella_Mines_Merge_Processor::get_registered_payout_wallet($network);
+
+        if (!$payout_wallet) {
+            wp_send_json_error('No payout wallet configured. Please set up a payout wallet first.');
+        }
+
+        // Process wallets and filter out payout wallets
+        require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-import-processor.php';
+
+        global $wpdb;
+
+        $valid_wallets = array();
+        $skipped_payout_count = 0;
+        $skipped_already_merged_count = 0;
+        $total_solutions = 0;
+        $challenge_submissions = array();
+
+        foreach ($import_data['wallets'] as $wallet) {
+            // Skip if this wallet is a payout wallet
+            if (isset($payout_addresses_to_skip[$wallet['address']])) {
+                $skipped_payout_count++;
+                continue;
+            }
+
+            // Skip if this wallet has already been successfully merged
+            $already_merged = $wpdb->get_var($wpdb->prepare("
+                SELECT COUNT(*) FROM {$wpdb->prefix}umbrella_mining_merges
+                WHERE original_address = %s AND status = 'success'
+            ", $wallet['address']));
+
+            if ($already_merged > 0) {
+                $skipped_already_merged_count++;
+                continue;
+            }
+
+            // Validate wallet structure
+            if (empty($wallet['address']) || empty($wallet['mnemonic']) || !isset($wallet['solutions'])) {
+                continue;
+            }
+
+            // Count solutions and collect challenge IDs for NIGHT calculation
+            $wallet_solution_count = 0;
+            if (is_array($wallet['solutions'])) {
+                $wallet_solution_count = count($wallet['solutions']);
+                $total_solutions += $wallet_solution_count;
+
+                // Collect challenge submissions for NIGHT calculation
+                foreach ($wallet['solutions'] as $solution) {
+                    if (isset($solution['challenge_id'])) {
+                        $challenge_id = $solution['challenge_id'];
+                        if (!isset($challenge_submissions[$challenge_id])) {
+                            $challenge_submissions[$challenge_id] = array();
+                        }
+                        $challenge_submissions[$challenge_id][] = $wallet['address'];
+                    }
+                }
+            }
+
+            $valid_wallets[] = $wallet;
+        }
+
+
+        if (count($valid_wallets) === 0) {
+            $error_msg = 'No valid wallets found in import file.';
+            if ($skipped_payout_count > 0) {
+                $error_msg .= ' ' . $skipped_payout_count . ' payout wallet(s) were skipped.';
+            }
+            if ($skipped_already_merged_count > 0) {
+                $error_msg .= ' ' . $skipped_already_merged_count . ' wallet(s) already merged (skipped).';
+            }
+            wp_send_json_error($error_msg);
+        }
+
+        // Calculate NIGHT estimate using same logic as Night Miner import
+        $night_estimate = Umbrella_Mines_Import_Processor::calculate_night_estimate_from_challenges($challenge_submissions);
+
+        // Create import session
+        global $wpdb;
+        $sessions_table = $wpdb->prefix . 'umbrella_mining_import_sessions';
+
+        $session_key = uniqid('umbrella_json_', true);
+
+        // Store wallet data in session
+        $wallet_ids_json = json_encode($valid_wallets);
+
+        $wpdb->insert($sessions_table, array(
+            'session_key' => $session_key,
+            'payout_address' => $payout_wallet->address,
+            'total_wallets' => count($valid_wallets),
+            'processed_wallets' => 0,
+            'successful_count' => 0,
+            'failed_count' => 0,
+            'wallet_ids_json' => $wallet_ids_json,
+            'status' => 'pending',
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql')
+        ));
+
+
+        // Return preview data
+        wp_send_json_success(array(
+            'session_key' => $session_key,
+            'wallet_count' => count($valid_wallets),
+            'wallets_with_solutions' => count(array_filter($valid_wallets, function($w) {
+                return isset($w['solutions']) && count($w['solutions']) > 0;
+            })),
+            'total_solutions' => $total_solutions,
+            'night_estimate' => $night_estimate,
+            'payout_address' => $payout_wallet->address,
+            'skipped_payout_wallets' => $skipped_payout_count,
+            'skipped_already_merged' => $skipped_already_merged_count,
+            'invalid_wallets' => 0,
+            'source_file' => basename($file['name']),
+            'import_type' => 'umbrella_json'
+        ));
+        } catch (Exception $e) {
+            wp_send_json_error('PHP Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine());
+        } catch (Error $e) {
+            wp_send_json_error('PHP Fatal Error: ' . $e->getMessage() . ' in ' . $e->getFile() . ' on line ' . $e->getLine());
         }
     }
 }

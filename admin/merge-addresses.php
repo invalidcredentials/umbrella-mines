@@ -802,7 +802,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
     }
 
 
-    // Merge all wallets
+    // Merge all wallets using chunked processing
     function mergeAllWallets() {
         const eligibleCount = <?php echo (int) $stats['eligible_wallets']; ?>;
 
@@ -834,42 +834,81 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         document.getElementById('merge-progress-bar').style.width = '0%';
         document.getElementById('merge-progress-bar').textContent = '';
 
-        // Simulate progress for better UX (since backend is synchronous)
-        let fakeProgress = 0;
-        const fakeProgressInterval = setInterval(() => {
-            fakeProgress += Math.random() * 15;
-            if (fakeProgress > 90) fakeProgress = 90; // Cap at 90% until real completion
-
-            const progressBar = document.getElementById('merge-progress-bar');
-            progressBar.style.width = fakeProgress + '%';
-            if (fakeProgress > 10) {
-                progressBar.textContent = Math.round(fakeProgress) + '%';
-            }
-            document.getElementById('merge-progress-percent').textContent = Math.round(fakeProgress) + '%';
-        }, 300);
-
+        // Step 1: Create merge session
         jQuery.post(ajaxurl, {
-            action: 'umbrella_merge_all_wallets',
+            action: 'umbrella_create_merge_session',
             nonce: '<?php echo wp_create_nonce('umbrella_merge_wallets'); ?>'
         }, function(response) {
-            clearInterval(fakeProgressInterval);
+            if (!response.success) {
+                progressDiv.style.display = 'none';
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                btn.innerHTML = originalText;
+                alert('❌ Failed to create merge session: ' + (response.data || 'Unknown error'));
+                return;
+            }
 
-            if (response.success) {
-                const data = response.data;
+            const sessionKey = response.data.session_key;
+            const totalWallets = response.data.total_wallets;
 
+            // Update total count with actual value from session
+            document.getElementById('merge-total-count').textContent = totalWallets;
+
+            // Step 2: Start processing chunks
+            processNextChunk(sessionKey, btn, originalText, progressDiv);
+
+        }).fail(function(xhr, status, error) {
+            progressDiv.style.display = 'none';
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.innerHTML = originalText;
+            alert('❌ Request failed: ' + error);
+        });
+    }
+
+    // Process chunks recursively until complete
+    function processNextChunk(sessionKey, btn, originalText, progressDiv) {
+        jQuery.post(ajaxurl, {
+            action: 'umbrella_process_merge_chunk',
+            nonce: '<?php echo wp_create_nonce('umbrella_merge_wallets'); ?>',
+            session_key: sessionKey,
+            chunk_size: 20
+        }, function(response) {
+            if (!response.success) {
+                alert('❌ Chunk processing failed: ' + (response.data || 'Unknown error'));
+                // Reset UI
+                progressDiv.style.display = 'none';
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                btn.innerHTML = originalText;
+                return;
+            }
+
+            const data = response.data;
+
+            // Update progress UI with real values
+            const progressPercent = data.progress_percent || 0;
+            const progressBar = document.getElementById('merge-progress-bar');
+            progressBar.style.width = progressPercent + '%';
+            progressBar.textContent = Math.round(progressPercent) + '%';
+
+            document.getElementById('merge-progress-percent').textContent = Math.round(progressPercent) + '%';
+            document.getElementById('merge-current-count').textContent = data.processed || 0;
+            document.getElementById('merge-success-count').textContent = data.successful || 0;
+            document.getElementById('merge-fail-count').textContent = data.failed || 0;
+
+            // Check if complete
+            if (data.complete) {
                 // Show 100% completion
-                document.getElementById('merge-progress-bar').style.width = '100%';
-                document.getElementById('merge-progress-bar').textContent = '100%';
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
                 document.getElementById('merge-progress-percent').textContent = '100%';
-                document.getElementById('merge-current-count').textContent = data.total_wallets || eligibleCount;
-                document.getElementById('merge-success-count').textContent = data.successful || 0;
-                document.getElementById('merge-fail-count').textContent = data.failed || 0;
 
                 // Show success message after brief delay
                 setTimeout(() => {
                     let message = '✅ Merge Complete!\n\n' +
-                        'Total Processed: ' + (data.total_wallets || 0) + '\n' +
-                        'Successful: ' + (data.successful || 0) + '\n';
+                        'Total Processed: ' + data.processed + '\n' +
+                        'Successful: ' + data.successful + '\n';
 
                     if (data.already_assigned > 0) {
                         message += 'Already Assigned: ' + data.already_assigned + '\n';
@@ -879,27 +918,20 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         message += 'Failed: ' + data.failed + '\n';
                     }
 
-                    message += '\nDuration: ' + (data.duration_seconds || 0) + 's';
-
                     alert(message);
                     location.reload();
                 }, 800);
-
             } else {
-                // Reset UI on error
-                progressDiv.style.display = 'none';
-                btn.disabled = false;
-                btn.style.opacity = '1';
-                btn.innerHTML = originalText;
-                alert('❌ Merge failed: ' + response.data);
+                // Process next chunk
+                processNextChunk(sessionKey, btn, originalText, progressDiv);
             }
-        }).fail(function() {
-            clearInterval(fakeProgressInterval);
-            progressDiv.style.display = 'none';
+
+        }).fail(function(xhr, status, error) {
+            alert('❌ Request failed: ' + error + '\n\nProgress has been saved. You can try again to resume.');
+            // Reset UI but keep progress visible so user can see where it stopped
             btn.disabled = false;
             btn.style.opacity = '1';
             btn.innerHTML = originalText;
-            alert('❌ Request failed. Please try again.');
         });
     }
 
@@ -931,9 +963,9 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         }, 2000);
     }
 
-    // View merge details modal
+    // View merge details modal (delegated binding for AJAX-loaded rows)
     jQuery(document).ready(function($) {
-        $('.view-merge').on('click', function(e) {
+        $(document).on('click', '.view-merge', function(e) {
             e.preventDefault();
             const mergeId = $(this).data('merge-id');
 
@@ -1037,9 +1069,13 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         function handleImportFile(file) {
             console.log('File selected:', file.name);
 
+            // Detect file type
+            const isZip = file.name.endsWith('.zip');
+            const isJson = file.name.endsWith('.json');
+
             // Validate file type
-            if (!file.name.endsWith('.zip')) {
-                alert('❌ Invalid file type. Please upload a ZIP file.');
+            if (!isZip && !isJson) {
+                alert('❌ Invalid file type. Please upload a ZIP or JSON file.');
                 return;
             }
 
@@ -1049,13 +1085,17 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                 return;
             }
 
+            // Determine which parser to use
+            const action = isJson ? 'umbrella_parse_umbrella_json' : 'umbrella_parse_import_file';
+            const fileType = isJson ? 'JSON' : 'ZIP';
+
             // Show parsing status
             $('#import-parsing-status').html(`
                 <div style="background: rgba(255, 170, 0, 0.1); border-left: 3px solid #ffaa00; padding: 16px; border-radius: 6px;">
                     <div style="display: flex; align-items: center; gap: 12px;">
                         <div style="font-size: 24px;">⏳</div>
                         <div>
-                            <div style="color: #ffaa00; font-weight: 600; margin-bottom: 4px;">Parsing ZIP file...</div>
+                            <div style="color: #ffaa00; font-weight: 600; margin-bottom: 4px;">Parsing ${fileType} file...</div>
                             <div style="color: #999; font-size: 13px;">Extracting wallets from ${file.name}</div>
                         </div>
                     </div>
@@ -1069,7 +1109,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
 
             // Upload and parse file
             const formData = new FormData();
-            formData.append('action', 'umbrella_parse_import_file');
+            formData.append('action', action);
             formData.append('nonce', '<?php echo wp_create_nonce('umbrella_mining'); ?>');
             formData.append('import_file', file);
 
@@ -1096,10 +1136,12 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         `);
                     }
                 },
-                error: function() {
+                error: function(xhr, status, error) {
+                    console.error('AJAX Error:', xhr.responseText);
                     $('#import-parsing-status').html(`
                         <div style="background: rgba(255, 51, 102, 0.1); border-left: 3px solid #ff3366; padding: 16px; border-radius: 6px;">
-                            <div style="color: #ff3366; font-weight: 600;">❌ Network error. Please try again.</div>
+                            <div style="color: #ff3366; font-weight: 600;">❌ Server Error (${xhr.status})</div>
+                            <pre style="color: #999; font-size: 11px; margin-top: 10px; overflow: auto; max-height: 300px;">${xhr.responseText.substring(0, 2000)}</pre>
                         </div>
                     `);
                 }
@@ -1168,6 +1210,24 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         </div>
                     ` : ''}
 
+                    ${data.skipped_already_merged > 0 ? `
+                        <div class="info-box" style="margin-bottom: 20px; background: rgba(0, 212, 255, 0.05); border-color: #00d4ff;">
+                            <div style="font-weight: 600; margin-bottom: 8px; color: #00d4ff;">✓ ${data.skipped_already_merged} Already Merged</div>
+                            <div style="color: #999; font-size: 13px; line-height: 1.6;">
+                                These wallets have already been successfully merged to your payout address and were automatically skipped to prevent duplicate submissions.
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${data.skipped_payout_wallets > 0 ? `
+                        <div class="info-box" style="margin-bottom: 20px; background: rgba(255, 170, 0, 0.05); border-color: #ffaa00;">
+                            <div style="font-weight: 600; margin-bottom: 8px; color: #ffaa00;">🔒 ${data.skipped_payout_wallets} Payout Wallets Excluded</div>
+                            <div style="color: #999; font-size: 13px; line-height: 1.6;">
+                                Payout wallet addresses were automatically excluded to prevent daisy-chaining between systems.
+                            </div>
+                        </div>
+                    ` : ''}
+
                     <!-- Danger Warning -->
                     <div class="danger-box" style="margin-top: 30px;">
                         <h2 style="margin: 0 0 20px 0; font-size: 20px; line-height: 1.4;">⚠️ CONFIRM MERGE OPERATION</h2>
@@ -1220,7 +1280,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         }
 
         // Cancel import
-        function cancelImport() {
+        window.cancelImport = function() {
             if (confirm('Cancel import and clear parsed data?')) {
                 $('#import-solutions-section').find('input[type="file"]').val('');
                 $('#import-parsing-status').hide();
@@ -1228,7 +1288,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                 $('#import-progress-container').hide();
                 $('#import-complete-container').hide();
             }
-        }
+        };
 
         // Start batch merge
         window.startImportMerge = function(sessionKey) {
@@ -1611,7 +1671,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         📦 Import Solutions from Other Miners
                     </h3>
                     <p style="margin: 0; font-size: 12px; color: #666; font-style: italic;">
-                        Drag and drop ZIP exports from Night Miner or other platforms
+                        Drag and drop ZIP exports from Night Miner or JSON exports from Umbrella Mines
                     </p>
                 </div>
                 <label class="toggle-switch">
@@ -1646,12 +1706,12 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                 " onmouseover="this.style.borderColor='#ff6b6b'; this.style.background='rgba(255, 107, 107, 0.1)'" onmouseout="this.style.borderColor='rgba(255, 107, 107, 0.3)'; this.style.background='rgba(255, 107, 107, 0.05)'">
                     <div style="font-size: 64px; margin-bottom: 28px; opacity: 0.6; line-height: 1;">📦</div>
                     <div style="font-size: 16px; font-weight: 600; color: #ff6b6b; margin-bottom: 8px;">
-                        Drag ZIP file here or click to browse
+                        Drag ZIP or JSON file here or click to browse
                     </div>
                     <div style="font-size: 13px; color: #999;">
-                        Supported: Night Miner exports (.zip) • Max size: 50MB
+                        Supported: Night Miner exports (.zip) or Umbrella Mines exports (.json) • Max size: 50MB
                     </div>
-                    <input type="file" id="import-file-input" accept=".zip" style="display: none;">
+                    <input type="file" id="import-file-input" accept=".zip,.json" style="display: none;">
                 </div>
 
                 <!-- Parsing Status -->
