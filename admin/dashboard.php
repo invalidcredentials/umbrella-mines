@@ -221,7 +221,7 @@ $active_processes = $wpdb->get_results("
                 </div>
                 <div style="background: rgba(255, 170, 0, 0.05); border: 1px solid rgba(255, 170, 0, 0.2); border-radius: 8px; padding: 16px;">
                     <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Average Per Wallet</div>
-                    <div style="font-size: 28px; font-weight: 700; color: #ffaa00;"><?php echo number_format($payout_stats['total_merged_solutions'] / $payout_stats['total_merged_wallets'], 1); ?></div>
+                    <div style="font-size: 28px; font-weight: 700; color: #ffaa00;"><?php echo $payout_stats['total_merged_wallets'] > 0 ? number_format($payout_stats['total_merged_solutions'] / $payout_stats['total_merged_wallets'], 1) : '0'; ?></div>
                     <div style="font-size: 11px; color: #666; margin-top: 4px;">Solutions per wallet</div>
                 </div>
             </div>

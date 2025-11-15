@@ -586,9 +586,15 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         left: 0;
         right: 0;
         bottom: 0;
-        background-color: #333;
-        transition: .3s;
+        background: linear-gradient(145deg, rgba(42, 63, 95, 0.6) 0%, rgba(26, 31, 58, 0.8) 100%);
+        border: 1px solid rgba(0, 212, 255, 0.2);
+        transition: all 0.3s ease;
         border-radius: 26px;
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+    }
+    .toggle-slider:hover {
+        border-color: rgba(0, 212, 255, 0.4);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), 0 0 10px rgba(0, 212, 255, 0.2);
     }
     .toggle-slider:before {
         position: absolute;
@@ -597,15 +603,20 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         width: 18px;
         left: 4px;
         bottom: 4px;
-        background-color: white;
-        transition: .3s;
+        background: linear-gradient(145deg, #ffffff 0%, #e0e0e0 100%);
+        transition: all 0.3s ease;
         border-radius: 50%;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
     }
     .toggle-switch input:checked + .toggle-slider {
-        background-color: #00d4ff;
+        background: linear-gradient(135deg, #00ff41 0%, #00d4ff 100%);
+        border-color: rgba(0, 255, 65, 0.5);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2), 0 0 15px rgba(0, 212, 255, 0.5);
     }
     .toggle-switch input:checked + .toggle-slider:before {
         transform: translateX(24px);
+        background: linear-gradient(145deg, #ffffff 0%, #f0f0f0 100%);
+        box-shadow: 0 2px 6px rgba(0, 255, 65, 0.4);
     }
 
     /* Import Wallet Styling */
@@ -1228,6 +1239,19 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         </div>
                     ` : ''}
 
+                    ${data.already_merged_missing_night > 0 ? `
+                        <div class="info-box" style="margin-bottom: 20px; background: rgba(155, 107, 199, 0.1); border-color: #9b6bc7;">
+                            <div style="font-weight: 600; margin-bottom: 8px; color: #9b6bc7; font-size: 15px;">
+                                ℹ️ These addresses appear to already be in the database but are missing NIGHT totals!
+                            </div>
+                            <div style="color: #ccc; font-size: 14px; line-height: 1.6;">
+                                <strong style="color: #9b6bc7;">${data.already_merged_missing_night} wallet${data.already_merged_missing_night > 1 ? 's' : ''}</strong> ${data.already_merged_missing_night > 1 ? 'are' : 'is'} already merged but missing NIGHT values.
+                                <br><br>
+                                ✅ <strong>Merge will UPDATE NIGHT totals ONLY for these addresses</strong> — no re-submission to API!
+                            </div>
+                        </div>
+                    ` : ''}
+
                     <!-- Danger Warning -->
                     <div class="danger-box" style="margin-top: 30px;">
                         <h2 style="margin: 0 0 20px 0; font-size: 20px; line-height: 1.4;">⚠️ CONFIRM MERGE OPERATION</h2>
@@ -1601,7 +1625,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         </div>
 
         <!-- Import Custom Payout Wallet Toggle -->
-        <div class="card" style="margin-bottom: 20px; border-left: 4px solid #00d4ff; background: rgba(0, 212, 255, 0.03); box-shadow: 0 0 20px rgba(0, 212, 255, 0.1);">
+        <div class="card" style="margin-bottom: 20px; border-left: 4px solid #00d4ff; background: rgba(0, 212, 255, 0.03); box-shadow: 0 0 20px rgba(0, 212, 255, 0.1); border-radius: 8px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                 <div>
                     <h3 style="margin: 0 0 4px 0; color: #00d4ff; font-size: 18px; letter-spacing: 0.5px; text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);">
@@ -1664,7 +1688,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         </div>
 
         <!-- Import Solutions from Other Miners -->
-        <div class="card" style="margin-bottom: 30px; border-left: 4px solid #ff6b6b; background: rgba(255, 107, 107, 0.03); box-shadow: 0 0 20px rgba(255, 107, 107, 0.1);">
+        <div class="card" style="margin-bottom: 30px; border-left: 4px solid #ff6b6b; background: rgba(255, 107, 107, 0.03); box-shadow: 0 0 20px rgba(255, 107, 107, 0.1); border-radius: 8px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                 <div>
                     <h3 style="margin: 0 0 4px 0; color: #ff6b6b; font-size: 18px; letter-spacing: 0.5px; text-shadow: 0 0 10px rgba(255, 107, 107, 0.5);">
@@ -1771,6 +1795,10 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
         <?php
         // Get payout wallet statistics
         $payout_stats = Umbrella_Mines_Merge_Processor::get_payout_wallet_stats($payout_wallet->address);
+
+        // Get total NIGHT for this payout wallet
+        $payout_night_data = Umbrella_Mines_Merge_Processor::get_payout_wallet_total_night($payout_wallet->address);
+
         if ($payout_stats['total_merged_wallets'] > 0):
         ?>
         <div style="background: linear-gradient(135deg, rgba(0, 255, 65, 0.05) 0%, rgba(0, 212, 255, 0.05) 100%); border: 2px solid rgba(0, 255, 65, 0.3); border-radius: 12px; padding: 24px; margin-bottom: 30px;">
@@ -1792,10 +1820,13 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                     <div style="font-size: 28px; font-weight: 700; color: #00d4ff;"><?php echo number_format($payout_stats['total_merged_solutions']); ?></div>
                     <div style="font-size: 11px; color: #666; margin-top: 4px;">Solutions accumulated</div>
                 </div>
-                <div style="background: rgba(255, 170, 0, 0.05); border: 1px solid rgba(255, 170, 0, 0.2); border-radius: 8px; padding: 16px;">
-                    <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Average Per Wallet</div>
-                    <div style="font-size: 28px; font-weight: 700; color: #ffaa00;"><?php echo number_format($payout_stats['total_merged_solutions'] / $payout_stats['total_merged_wallets'], 1); ?></div>
-                    <div style="font-size: 11px; color: #666; margin-top: 4px;">Solutions per wallet</div>
+                <div style="background: rgba(155, 107, 199, 0.1); border: 1px solid rgba(155, 107, 199, 0.3); border-radius: 8px; padding: 16px;">
+                    <div style="font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">Total NIGHT</div>
+                    <div style="font-size: 28px; font-weight: 700; color: #9b6bc7;"><?php echo number_format($payout_night_data['total_night'], 6); ?></div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                        Mined: <?php echo number_format($payout_night_data['mined_night'], 2); ?> |
+                        Imported: <?php echo number_format($payout_night_data['imported_night'], 2); ?>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1967,10 +1998,15 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
             tbody.empty();
 
             merges.forEach(function(merge) {
+                const nightValue = merge.night_value && merge.night_value > 0
+                    ? `<span style="color: #9b6bc7; font-weight: 600;">${parseFloat(merge.night_value).toFixed(6)} NIGHT</span>`
+                    : `<span style="color: #666;">—</span>`;
+
                 const row = `
                     <tr>
                         <td><code>${merge.original_address.substring(0, 20)}...</code></td>
                         <td>${merge.solutions_consolidated} solutions</td>
+                        <td>${nightValue}</td>
                         <td>
                             <span class="status-badge status-${merge.status}">
                                 ${merge.status}
@@ -2017,6 +2053,7 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                     <tr>
                         <th>Original Address</th>
                         <th>Solutions</th>
+                        <th>NIGHT Value</th>
                         <th>Status</th>
                         <th>Time</th>
                         <th>Actions</th>
@@ -2027,6 +2064,13 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         <tr>
                             <td><code><?php echo esc_html(substr($merge->original_address, 0, 20)); ?>...</code></td>
                             <td><?php echo (int) $merge->solutions_consolidated; ?> solutions</td>
+                            <td>
+                                <?php if ($merge->night_value !== null && $merge->night_value > 0): ?>
+                                    <span style="color: #9b6bc7; font-weight: 600;"><?php echo number_format($merge->night_value, 6); ?> NIGHT</span>
+                                <?php else: ?>
+                                    <span style="color: #666;">—</span>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <span class="status-badge status-<?php echo esc_attr($merge->status); ?>">
                                     <?php echo esc_html($merge->status); ?>

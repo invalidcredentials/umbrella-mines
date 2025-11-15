@@ -5,6 +5,30 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.69-hotpocket] - 2025-11-15
+
+### Added - NIGHT Tracking Hot-Improvement 🌙
+
+#### Complete NIGHT Value Tracking System
+- **Per-wallet NIGHT calculation** - Accurately calculates NIGHT value for each imported wallet based on challenge submissions and day-specific work_to_star rates
+- **Database persistence** - Added `night_value` column to merges table with automatic migration for existing installations
+- **Smart re-upload detection** - Detects already-merged wallets and updates NIGHT values without re-submitting to API
+- **Total NIGHT display** - Payout wallet statistics now show total NIGHT with breakdown: `Mined: X | Imported: Y`
+- **Purple notice on re-upload** - Shows when addresses are already merged but missing NIGHT values: "Merge will UPDATE NIGHT totals ONLY"
+- **Merge history NIGHT column** - Added purple NIGHT value display to merge history table for complete audit trail
+- **Retroactive calculation support** - Re-uploading original wallet.json files fills in missing NIGHT values for old imports
+
+#### Enhanced UI Polish
+- **Rounded card corners** - Import sections now have 8px border-radius matching plugin aesthetic
+- **Gradient toggle switches** - Beautiful dark gradient toggles with cyan borders and hover glows
+- **Active toggle effects** - Green-to-cyan gradient with outer glow when enabled
+- **Dashboard Live payout stats** - Replaced "Average Per Wallet" with "Total NIGHT" across all dashboard pages
+
+### Technical Details
+- **API rate fetching** - Fetches work_to_star_rate from Scavenger API for accurate day-specific calculations
+- **Challenge parsing** - Extracts day from challenge IDs (e.g., `**D14C24` → Day 14) for precise NIGHT calculation
+- **Formula**: `NIGHT = (solutions × work_to_star_rate) / 1,000,000` per challenge
+
 ## [0.4.20.69] - 2025-01-13
 
 ### Added

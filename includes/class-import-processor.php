@@ -175,6 +175,40 @@ class Umbrella_Mines_Import_Processor {
         // Estimate NIGHT value (using challenge_submissions data for accurate calculation)
         $night_estimate = self::calculate_night_estimate_from_challenges($challenge_submissions);
 
+        // Calculate NIGHT per wallet for storage during merge
+        $wallets = self::add_night_values_to_wallets($wallets, $challenge_submissions);
+
+        // Check how many wallets are already merged
+        global $wpdb;
+        $merges_table = $wpdb->prefix . 'umbrella_mining_merges';
+        $wallet_addresses = array_column($wallets, 'address');
+        $already_merged_count = 0;
+        $already_merged_missing_night = 0;
+
+        error_log("=== CHECKING FOR ALREADY MERGED WALLETS ===");
+        error_log("Total wallets to check: " . count($wallet_addresses));
+        error_log("First few addresses: " . implode(', ', array_slice($wallet_addresses, 0, 3)));
+
+        if (!empty($wallet_addresses)) {
+            $placeholders = implode(',', array_fill(0, count($wallet_addresses), '%s'));
+            $already_merged = $wpdb->get_results($wpdb->prepare(
+                "SELECT original_address, night_value FROM {$merges_table} WHERE original_address IN ($placeholders) AND status = 'success'",
+                ...$wallet_addresses
+            ));
+
+            $already_merged_count = count($already_merged);
+            error_log("Found already merged: $already_merged_count");
+
+            foreach ($already_merged as $merged) {
+                error_log("  - {$merged->original_address}: night_value = " . ($merged->night_value ?? 'NULL'));
+                if ($merged->night_value === null || $merged->night_value == 0) {
+                    $already_merged_missing_night++;
+                }
+            }
+
+            error_log("Already merged missing NIGHT: $already_merged_missing_night");
+        }
+
         return [
             'success' => true,
             'wallets' => $wallets,
@@ -184,7 +218,9 @@ class Umbrella_Mines_Import_Processor {
             'invalid_wallets' => $invalid_count,
             'night_estimate' => $night_estimate,
             'night_breakdown' => $night_estimate['breakdown'] ?? [],
-            'network' => $network
+            'network' => $network,
+            'already_merged_count' => $already_merged_count,
+            'already_merged_missing_night' => $already_merged_missing_night
         ];
     }
 
@@ -292,6 +328,62 @@ class Umbrella_Mines_Import_Processor {
             'total_numeric' => $total_night,
             'breakdown' => $breakdown
         ];
+    }
+
+    /**
+     * Add NIGHT value to each wallet based on their challenge submissions
+     *
+     * @param array $wallets Array of wallet data
+     * @param array $challenge_submissions Challenge submissions data
+     * @return array Wallets with night_value added
+     */
+    private static function add_night_values_to_wallets($wallets, $challenge_submissions) {
+        // Fetch work_to_star_rate values from API
+        $api_url = get_option('umbrella_mines_api_url', 'https://scavenger.prod.gd.midnighttge.io');
+        $rates_response = wp_remote_get($api_url . '/work_to_star_rate', array(
+            'timeout' => 10,
+            'sslverify' => false
+        ));
+
+        $day_rates = [];
+        if (!is_wp_error($rates_response)) {
+            $body = wp_remote_retrieve_body($rates_response);
+            $rates_data = json_decode($body, true);
+            if (is_array($rates_data)) {
+                $day_rates = $rates_data;
+            }
+        }
+
+        // Calculate NIGHT for each wallet
+        foreach ($wallets as &$wallet) {
+            $wallet_index = $wallet['index'];
+            $wallet_night = 0;
+
+            // Find all challenges this wallet participated in
+            foreach ($challenge_submissions as $challenge_id => $indices) {
+                if (in_array($wallet_index, $indices)) {
+                    // Parse day from challenge ID (e.g., **D06C19 → Day 6)
+                    if (preg_match('/\*\*D(\d+)C\d+/', $challenge_id, $matches)) {
+                        $day = (int) $matches[1];
+
+                        // Get work_to_star_rate for this day
+                        $work_to_star_rate = $day_rates[$day] ?? $day_rates[$day - 1] ?? null;
+
+                        if ($work_to_star_rate !== null) {
+                            // Each solution = 1 × work_to_star_rate STAR
+                            $star_earned = (int) $work_to_star_rate;
+                            $night_earned = $star_earned / 1000000;
+                            $wallet_night += $night_earned;
+                        }
+                    }
+                }
+            }
+
+            // Store the calculated NIGHT value
+            $wallet['night_value'] = $wallet_night;
+        }
+
+        return $wallets;
     }
 
     /**
@@ -473,6 +565,11 @@ class Umbrella_Mines_Import_Processor {
 
             if ($result['success']) {
                 $successful++;
+
+                // Log NIGHT value updates separately
+                if (isset($result['night_value_updated']) && $result['night_value_updated']) {
+                    error_log("  → NIGHT value updated: " . ($result['night_value'] ?? 'N/A'));
+                }
             } else {
                 $failed++;
                 $error_log[] = [
@@ -560,7 +657,7 @@ class Umbrella_Mines_Import_Processor {
     /**
      * Merge a single imported wallet
      *
-     * @param array $wallet Wallet data (address, private_key_hex)
+     * @param array $wallet Wallet data (address, private_key_hex, night_value)
      * @param string $payout_address Destination address
      * @param string $network Network
      * @return array Result
@@ -571,6 +668,7 @@ class Umbrella_Mines_Import_Processor {
 
         $address = $wallet['address'];
         $private_key_hex = $wallet['private_key_hex'];
+        $night_value = isset($wallet['night_value']) ? $wallet['night_value'] : null;
 
         error_log("Merging imported wallet: $address");
 
@@ -581,6 +679,26 @@ class Umbrella_Mines_Import_Processor {
         ));
 
         if ($existing) {
+            // Wallet already merged - check if we need to update night_value
+            if ($night_value !== null && ($existing->night_value === null || $existing->night_value == 0)) {
+                error_log("Wallet already merged but missing NIGHT value - updating with: $night_value");
+
+                $wpdb->update(
+                    $merges_table,
+                    ['night_value' => $night_value],
+                    ['id' => $existing->id],
+                    ['%f'],
+                    ['%d']
+                );
+
+                return [
+                    'success' => true,
+                    'already_merged' => true,
+                    'night_value_updated' => true,
+                    'night_value' => $night_value
+                ];
+            }
+
             error_log("Wallet already merged - skipping");
             return ['success' => true, 'already_merged' => true];
         }
@@ -630,6 +748,7 @@ class Umbrella_Mines_Import_Processor {
                     'merge_signature' => $signature,
                     'merge_receipt' => json_encode($api_response),
                     'solutions_consolidated' => 0,
+                    'night_value' => $night_value,
                     'status' => 'success',
                     'error_message' => 'Already assigned (409)',
                     'merged_at' => current_time('mysql')
@@ -652,6 +771,7 @@ class Umbrella_Mines_Import_Processor {
                     'merge_signature' => $signature,
                     'merge_receipt' => json_encode($api_response),
                     'solutions_consolidated' => $solutions_consolidated,
+                    'night_value' => $night_value,
                     'status' => 'success',
                     'merged_at' => current_time('mysql')
                 ]

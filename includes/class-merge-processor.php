@@ -989,7 +989,8 @@ class Umbrella_Mines_Merge_Processor {
                 SELECT
                     payout_address,
                     COUNT(*) as total_merged_wallets,
-                    SUM(solutions_consolidated) as total_merged_solutions
+                    SUM(solutions_consolidated) as total_merged_solutions,
+                    SUM(night_value) as total_night_imported
                 FROM {$merges_table}
                 WHERE payout_address = %s AND status = 'success'
                 GROUP BY payout_address
@@ -999,7 +1000,8 @@ class Umbrella_Mines_Merge_Processor {
                 return array(
                     'payout_address' => $payout_address,
                     'total_merged_wallets' => 0,
-                    'total_merged_solutions' => 0
+                    'total_merged_solutions' => 0,
+                    'total_night_imported' => 0
                 );
             }
 
@@ -1011,6 +1013,7 @@ class Umbrella_Mines_Merge_Processor {
                     payout_address,
                     COUNT(*) as total_merged_wallets,
                     SUM(solutions_consolidated) as total_merged_solutions,
+                    SUM(night_value) as total_night_imported,
                     MAX(merged_at) as last_merge_at
                 FROM {$merges_table}
                 WHERE status = 'success'
@@ -1020,5 +1023,86 @@ class Umbrella_Mines_Merge_Processor {
 
             return $stats ? $stats : array();
         }
+    }
+
+    /**
+     * Get total NIGHT for a payout wallet (mined + imported)
+     *
+     * @param string $payout_address Payout wallet address
+     * @return array Total NIGHT breakdown
+     */
+    public static function get_payout_wallet_total_night($payout_address) {
+        global $wpdb;
+
+        // Get MINED NIGHT (from this instance's receipts)
+        $receipts_table = $wpdb->prefix . 'umbrella_mining_receipts';
+        $solutions_table = $wpdb->prefix . 'umbrella_mining_solutions';
+        $challenges_table = $wpdb->prefix . 'umbrella_mining_challenges';
+        $night_rates_table = $wpdb->prefix . 'umbrella_night_rates';
+        $wallets_table = $wpdb->prefix . 'umbrella_mining_wallets';
+
+        // Calculate mined NIGHT for wallets that belong to this payout address
+        // This includes the payout wallet itself AND any wallets that were merged to it
+        $merges_table = $wpdb->prefix . 'umbrella_mining_merges';
+
+        // Get all wallet IDs that belong to this payout address
+        // 1. The payout wallet itself
+        // 2. Any wallets that were merged to this payout address
+        $wallet_ids_query = $wpdb->prepare("
+            SELECT DISTINCT w.id
+            FROM {$wallets_table} w
+            WHERE w.address = %s
+
+            UNION
+
+            SELECT DISTINCT m.original_wallet_id
+            FROM {$merges_table} m
+            WHERE m.payout_address = %s
+            AND m.status = 'success'
+            AND m.original_wallet_id > 0
+        ", $payout_address, $payout_address);
+
+        $wallet_ids = $wpdb->get_col($wallet_ids_query);
+
+        $mined_night = 0;
+        if (!empty($wallet_ids)) {
+            $wallet_ids_str = implode(',', array_map('intval', $wallet_ids));
+
+            // Calculate NIGHT from receipts for these wallets
+            $night_calculation = $wpdb->get_results("
+                SELECT c.day, COUNT(r.id) as receipt_count, n.star_per_receipt
+                FROM {$receipts_table} r
+                INNER JOIN {$solutions_table} s ON r.solution_id = s.id
+                INNER JOIN {$challenges_table} c ON s.challenge_id = c.challenge_id
+                INNER JOIN {$night_rates_table} n ON c.day = n.day
+                WHERE s.wallet_id IN ({$wallet_ids_str})
+                GROUP BY c.day, n.star_per_receipt
+            ");
+
+            $total_star = 0;
+            foreach ($night_calculation as $row) {
+                $total_star += (int)$row->receipt_count * (int)$row->star_per_receipt;
+            }
+            $mined_night = $total_star / 1000000;
+        }
+
+        // Get IMPORTED NIGHT (from merges)
+        $imported_night_result = $wpdb->get_var($wpdb->prepare("
+            SELECT SUM(night_value)
+            FROM {$merges_table}
+            WHERE payout_address = %s
+            AND status = 'success'
+            AND night_value IS NOT NULL
+        ", $payout_address));
+
+        $imported_night = $imported_night_result ? (float)$imported_night_result : 0;
+
+        $total_night = $mined_night + $imported_night;
+
+        return array(
+            'mined_night' => $mined_night,
+            'imported_night' => $imported_night,
+            'total_night' => $total_night
+        );
     }
 }

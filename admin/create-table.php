@@ -188,6 +188,7 @@ if (isset($_POST['create_tables']) && check_admin_referer('create_umbrella_table
         merge_signature text NOT NULL,
         merge_receipt longtext,
         solutions_consolidated int DEFAULT 0,
+        night_value DECIMAL(20,6) DEFAULT NULL,
         status enum('pending','processing','success','failed') DEFAULT 'pending',
         error_message text,
         mnemonic_encrypted text,

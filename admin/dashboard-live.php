@@ -204,30 +204,35 @@ if (file_exists($log_file)) {
         </div>
     </div>
 
-    <!-- Stats Grid -->
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-label">WALLETS</div>
-            <div class="stat-value"><?php echo number_format($stats['total_wallets']); ?></div>
-            <div class="stat-meta"><?php echo number_format($stats['registered_wallets']); ?> registered</div>
+    <!-- Mining Statistics -->
+    <div class="mining-stats-container">
+        <div class="mining-stats-header">
+            <span class="mining-stats-title">MINING STATISTICS</span>
         </div>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">WALLETS</div>
+                <div class="stat-value"><?php echo number_format($stats['total_wallets']); ?></div>
+                <div class="stat-meta"><?php echo number_format($stats['registered_wallets']); ?> registered</div>
+            </div>
 
-        <div class="stat-card">
-            <div class="stat-label">SOLUTIONS</div>
-            <div class="stat-value"><?php echo number_format($stats['total_solutions']); ?></div>
-            <div class="stat-meta"><?php echo number_format($stats['submitted_solutions']); ?> submitted</div>
-        </div>
+            <div class="stat-card">
+                <div class="stat-label">SOLUTIONS</div>
+                <div class="stat-value"><?php echo number_format($stats['total_solutions']); ?></div>
+                <div class="stat-meta"><?php echo number_format($stats['submitted_solutions']); ?> submitted</div>
+            </div>
 
-        <div class="stat-card">
-            <div class="stat-label">PENDING</div>
-            <div class="stat-value"><?php echo number_format($stats['pending_solutions']); ?></div>
-            <div class="stat-meta">awaiting submission</div>
-        </div>
+            <div class="stat-card">
+                <div class="stat-label">PENDING</div>
+                <div class="stat-value"><?php echo number_format($stats['pending_solutions']); ?></div>
+                <div class="stat-meta">awaiting submission</div>
+            </div>
 
-        <div class="stat-card night">
-            <div class="stat-label">NIGHT EARNED</div>
-            <div class="stat-value"><?php echo number_format($total_night, 6); ?></div>
-            <div class="stat-meta"><?php echo number_format($stats['total_receipts']); ?> receipts</div>
+            <div class="stat-card night">
+                <div class="stat-label">NIGHT EARNED</div>
+                <div class="stat-value"><?php echo number_format($total_night, 6); ?></div>
+                <div class="stat-meta"><?php echo number_format($stats['total_receipts']); ?> receipts</div>
+            </div>
         </div>
     </div>
 
@@ -238,6 +243,9 @@ if (file_exists($log_file)) {
     if (count($all_payout_stats) > 0):
         $primary_payout = $all_payout_stats[0]; // First one (most merged wallets)
         $other_payouts = array_slice($all_payout_stats, 1); // Rest
+
+        // Get total NIGHT for primary payout wallet
+        $primary_night_data = Umbrella_Mines_Merge_Processor::get_payout_wallet_total_night($primary_payout['payout_address']);
     ?>
     <div class="payout-stats-container">
         <div class="payout-stats-header">
@@ -270,10 +278,13 @@ if (file_exists($log_file)) {
                     <div class="metric-value"><?php echo number_format($primary_payout['total_merged_solutions']); ?></div>
                     <div class="metric-sublabel">Solutions accumulated</div>
                 </div>
-                <div class="payout-metric average">
-                    <div class="metric-label">Average Per Wallet</div>
-                    <div class="metric-value"><?php echo number_format($primary_payout['total_merged_solutions'] / $primary_payout['total_merged_wallets'], 1); ?></div>
-                    <div class="metric-sublabel">Solutions per wallet</div>
+                <div class="payout-metric night">
+                    <div class="metric-label">Total NIGHT</div>
+                    <div class="metric-value"><?php echo number_format($primary_night_data['total_night'], 6); ?></div>
+                    <div class="metric-sublabel">
+                        Mined: <?php echo number_format($primary_night_data['mined_night'], 2); ?> |
+                        Imported: <?php echo number_format($primary_night_data['imported_night'], 2); ?>
+                    </div>
                 </div>
             </div>
         </div>
@@ -285,7 +296,10 @@ if (file_exists($log_file)) {
             <span class="toggle-text">Show <?php echo count($other_payouts); ?> other payout wallet<?php echo count($other_payouts) > 1 ? 's' : ''; ?></span>
         </div>
         <div id="other-payouts" style="display: none;">
-            <?php foreach ($other_payouts as $payout_stats): ?>
+            <?php foreach ($other_payouts as $payout_stats):
+                // Get total NIGHT for this payout wallet
+                $payout_night_data = Umbrella_Mines_Merge_Processor::get_payout_wallet_total_night($payout_stats['payout_address']);
+            ?>
             <div class="payout-stat-card">
                 <div class="payout-address-header">
                     <span class="payout-icon">💵</span>
@@ -308,10 +322,13 @@ if (file_exists($log_file)) {
                         <div class="metric-value"><?php echo number_format($payout_stats['total_merged_solutions']); ?></div>
                         <div class="metric-sublabel">Solutions accumulated</div>
                     </div>
-                    <div class="payout-metric average">
-                        <div class="metric-label">Average Per Wallet</div>
-                        <div class="metric-value"><?php echo number_format($payout_stats['total_merged_solutions'] / $payout_stats['total_merged_wallets'], 1); ?></div>
-                        <div class="metric-sublabel">Solutions per wallet</div>
+                    <div class="payout-metric night">
+                        <div class="metric-label">Total NIGHT</div>
+                        <div class="metric-value"><?php echo number_format($payout_night_data['total_night'], 6); ?></div>
+                        <div class="metric-sublabel">
+                            Mined: <?php echo number_format($payout_night_data['mined_night'], 2); ?> |
+                            Imported: <?php echo number_format($payout_night_data['imported_night'], 2); ?>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -869,12 +886,37 @@ jQuery(document).ready(function($) {
         50% { opacity: 0.3; }
     }
 
+    /* Mining Statistics Container */
+    .mining-stats-container {
+        background: linear-gradient(145deg, #1a1f3a 0%, #0f1429 100%);
+        border: 1px solid #2a3f5f;
+        border-radius: 8px;
+        margin-bottom: 30px;
+        overflow: hidden;
+    }
+
+    .mining-stats-header {
+        padding: 15px 25px;
+        background: rgba(0, 255, 65, 0.05);
+        border-bottom: 1px solid #2a3f5f;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .mining-stats-title {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 2px;
+        color: #00ff41;
+    }
+
     /* Stats Grid */
     .stats-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
         gap: 20px;
-        margin-bottom: 30px;
+        padding: 25px;
     }
 
     .stat-card {
@@ -1044,8 +1086,8 @@ jQuery(document).ready(function($) {
         border-left: 3px solid #00d4ff;
     }
 
-    .payout-metric.average {
-        border-left: 3px solid #ffaa00;
+    .payout-metric.night {
+        border-left: 3px solid #9b6bc7;
     }
 
     .metric-label {
@@ -1071,8 +1113,8 @@ jQuery(document).ready(function($) {
         color: #00d4ff;
     }
 
-    .payout-metric.average .metric-value {
-        color: #ffaa00;
+    .payout-metric.night .metric-value {
+        color: #9b6bc7;
     }
 
     .metric-sublabel {

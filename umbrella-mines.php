@@ -41,6 +41,9 @@ class Umbrella_Mines {
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
 
+        // Run database migrations
+        add_action('admin_init', array($this, 'run_database_migrations'));
+
         // Handle Start/Stop mining actions EARLY
         add_action('admin_init', array($this, 'handle_mining_actions'));
         add_action('admin_init', array($this, 'handle_payout_wallet_actions'));
@@ -287,8 +290,10 @@ class Umbrella_Mines {
             merge_signature text NOT NULL,
             merge_receipt longtext,
             solutions_consolidated int DEFAULT 0,
+            night_value DECIMAL(20,6) DEFAULT NULL,
             status enum('pending','processing','success','failed') DEFAULT 'pending',
             error_message text,
+            mnemonic_encrypted text,
             merged_at datetime DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY idx_original (original_address),
@@ -405,6 +410,34 @@ class Umbrella_Mines {
         flush_rewrite_rules();
         // Clear cron
         wp_clear_scheduled_hook('umbrella_mines_process_jobs');
+    }
+
+    /**
+     * Run database migrations
+     */
+    public function run_database_migrations() {
+        global $wpdb;
+
+        // Only run once per page load
+        static $migrations_run = false;
+        if ($migrations_run) {
+            return;
+        }
+        $migrations_run = true;
+
+        $merges_table = $wpdb->prefix . 'umbrella_mining_merges';
+
+        // Migration 1: Add night_value column to merges table
+        $column_exists = $wpdb->get_results($wpdb->prepare(
+            "SHOW COLUMNS FROM `{$merges_table}` LIKE %s",
+            'night_value'
+        ));
+
+        if (empty($column_exists)) {
+            error_log('UMBRELLA MINES MIGRATION: Adding night_value column to merges table');
+            $wpdb->query("ALTER TABLE `{$merges_table}` ADD COLUMN `night_value` DECIMAL(20,6) DEFAULT NULL AFTER `solutions_consolidated`");
+            error_log('UMBRELLA MINES MIGRATION: night_value column added successfully');
+        }
     }
 
     /**
@@ -3304,6 +3337,7 @@ class Umbrella_Mines {
                 'id' => $merge->id,
                 'original_address' => $merge->original_address,
                 'solutions_consolidated' => (int) $merge->solutions_consolidated,
+                'night_value' => $merge->night_value ? (float) $merge->night_value : null,
                 'status' => $merge->status,
                 'time_ago' => human_time_diff(strtotime($merge->merged_at), current_time('timestamp'))
             );
@@ -3458,7 +3492,9 @@ class Umbrella_Mines {
             'night_estimate' => $result['night_estimate'],
             'network' => $result['network'],
             'payout_address' => $payout_wallet->address,
-            'session_key' => $session_key
+            'session_key' => $session_key,
+            'already_merged_count' => $result['already_merged_count'] ?? 0,
+            'already_merged_missing_night' => $result['already_merged_missing_night'] ?? 0
         ));
     }
 
