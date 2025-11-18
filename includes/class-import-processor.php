@@ -523,7 +523,7 @@ class Umbrella_Mines_Import_Processor {
             return ['success' => false, 'error' => 'Session not found'];
         }
 
-        $wallets = json_decode($session->wallets_data, true);
+        $wallets = json_decode($session->wallet_ids_json, true) ?: [];
         $processed_addresses = json_decode($session->processed_addresses, true) ?: [];
         $error_log = json_decode($session->error_log, true) ?: [];
         $payout_address = $session->payout_address;

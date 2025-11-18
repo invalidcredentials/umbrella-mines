@@ -5,6 +5,18 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.71] - 2025-11-18
+
+### Fixed
+- **Critical merge crash** - Fixed 500 error during batch merge due to wrong column name
+  - Changed `$session->wallets_data` to `$session->wallet_ids_json` in batch_merge_with_resume()
+  - Added null coalescing to prevent array_filter() errors on null values
+  - Merge process now properly reads wallet data from import sessions
+
+### Technical Details
+- The database schema uses `wallet_ids_json` but code was trying to access `wallets_data`
+- Added `?: []` fallback for json_decode to ensure arrays are never null
+
 ## [0.4.20.70] - 2025-11-18
 
 ### Fixed
