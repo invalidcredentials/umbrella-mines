@@ -5,6 +5,28 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.72] - 2025-11-18
+
+### Fixed
+- **Critical NIGHT calculation bug** - Fixed NIGHT values showing as 0 for Umbrella JSON imports
+  - Updated `add_night_values_to_wallets()` to support both Night Miner format (uses 'index') and Umbrella JSON format (uses 'address')
+  - Changed wallet identifier logic: `isset($wallet['index']) ? $wallet['index'] : $wallet['address']`
+  - NIGHT tokens now calculate correctly for all import types
+- **Night Miner import failure** - Fixed Night Miner showing 0 wallets during batch merge
+  - Changed `create_import_session()` to use `wallet_ids_json` column instead of `wallets_data`
+  - Both Night Miner and Umbrella JSON now use consistent column naming for session storage
+  - Batch merge processor can now properly read wallet data from all import types
+- **Re-upload NIGHT updates** - Added support for re-uploading to update missing NIGHT values
+  - Skip logic now only skips wallets that are merged AND have NIGHT value > 0
+  - Wallets with null/zero NIGHT can be re-uploaded to update values without API resubmission
+  - Added `already_merged_missing_night` counter and purple warning notice in UI
+  - Matches Night Miner re-upload behavior for updating existing records
+
+### Technical Details
+- Both import types now use unified wallet identifier system for NIGHT calculations
+- Session storage standardized on `wallet_ids_json` column across all import flows
+- Purple notice displays when wallets need NIGHT value updates during re-upload
+
 ## [0.4.20.71] - 2025-11-18
 
 ### Fixed

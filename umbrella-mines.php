@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.4.20.71
+ * Version: 0.4.20.72
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('UMBRELLA_MINES_VERSION', '0.4.20.71');
+define('UMBRELLA_MINES_VERSION', '0.4.20.72');
 define('UMBRELLA_MINES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('UMBRELLA_MINES_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('UMBRELLA_MINES_DATA_DIR', WP_CONTENT_DIR . '/uploads/umbrella-mines');
@@ -3771,6 +3771,7 @@ class Umbrella_Mines {
         $valid_wallets = array();
         $skipped_payout_count = 0;
         $skipped_already_merged_count = 0;
+        $already_merged_missing_night = 0;
         $total_solutions = 0;
         $challenge_submissions = array();
 
@@ -3784,13 +3785,19 @@ class Umbrella_Mines {
                 continue;
             }
 
-            // Skip if this wallet has already been successfully merged
-            $already_merged = $wpdb->get_var($wpdb->prepare("
-                SELECT COUNT(*) FROM {$wpdb->prefix}umbrella_mining_merges
+            // Check if this wallet has already been successfully merged
+            $existing_merge = $wpdb->get_row($wpdb->prepare("
+                SELECT night_value FROM {$wpdb->prefix}umbrella_mining_merges
                 WHERE original_address = %s AND status = 'success'
             ", $wallet['address']));
 
-            if ($already_merged > 0) {
+            // Track wallets that are merged but missing NIGHT values
+            if ($existing_merge && ($existing_merge->night_value === null || $existing_merge->night_value == 0)) {
+                $already_merged_missing_night++;
+            }
+
+            // Skip only if merged AND has NIGHT value - allow re-upload to update missing NIGHT values
+            if ($existing_merge && $existing_merge->night_value !== null && $existing_merge->night_value > 0) {
                 $skipped_already_merged_count++;
                 continue;
             }
@@ -3840,6 +3847,9 @@ class Umbrella_Mines {
         // Calculate NIGHT estimate using same logic as Night Miner import
         $night_estimate = Umbrella_Mines_Import_Processor::calculate_night_estimate_from_challenges($challenge_submissions);
 
+        // Add NIGHT values to each wallet for storage during merge (same as Night Miner flow)
+        $valid_wallets = Umbrella_Mines_Import_Processor::add_night_values_to_wallets($valid_wallets, $challenge_submissions);
+
         // Create import session
         global $wpdb;
         $sessions_table = $wpdb->prefix . 'umbrella_mining_import_sessions';
@@ -3875,6 +3885,7 @@ class Umbrella_Mines {
             'payout_address' => $payout_wallet->address,
             'skipped_payout_wallets' => $skipped_payout_count,
             'skipped_already_merged' => $skipped_already_merged_count,
+            'already_merged_missing_night' => $already_merged_missing_night,
             'invalid_wallets' => 0,
             'source_file' => basename($file['name']),
             'import_type' => 'umbrella_json'

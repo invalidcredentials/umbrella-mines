@@ -337,7 +337,7 @@ class Umbrella_Mines_Import_Processor {
      * @param array $challenge_submissions Challenge submissions data
      * @return array Wallets with night_value added
      */
-    private static function add_night_values_to_wallets($wallets, $challenge_submissions) {
+    public static function add_night_values_to_wallets($wallets, $challenge_submissions) {
         // Fetch work_to_star_rate values from API
         $api_url = get_option('umbrella_mines_api_url', 'https://scavenger.prod.gd.midnighttge.io');
         $rates_response = wp_remote_get($api_url . '/work_to_star_rate', array(
@@ -356,12 +356,13 @@ class Umbrella_Mines_Import_Processor {
 
         // Calculate NIGHT for each wallet
         foreach ($wallets as &$wallet) {
-            $wallet_index = $wallet['index'];
+            // Support both Night Miner format (index) and Umbrella JSON format (address)
+            $wallet_identifier = isset($wallet['index']) ? $wallet['index'] : $wallet['address'];
             $wallet_night = 0;
 
             // Find all challenges this wallet participated in
-            foreach ($challenge_submissions as $challenge_id => $indices) {
-                if (in_array($wallet_index, $indices)) {
+            foreach ($challenge_submissions as $challenge_id => $identifiers) {
+                if (in_array($wallet_identifier, $identifiers)) {
                     // Parse day from challenge ID (e.g., **D06C19 → Day 6)
                     if (preg_match('/\*\*D(\d+)C\d+/', $challenge_id, $matches)) {
                         $day = (int) $matches[1];
@@ -667,7 +668,15 @@ class Umbrella_Mines_Import_Processor {
         $merges_table = $wpdb->prefix . 'umbrella_mining_merges';
 
         $address = $wallet['address'];
-        $private_key_hex = $wallet['private_key_hex'];
+        // Support both Night Miner format (private_key_hex) and Umbrella format (payment_skey_extended)
+        $private_key_hex = isset($wallet['private_key_hex']) ? $wallet['private_key_hex'] :
+                          (isset($wallet['payment_skey_extended']) ? $wallet['payment_skey_extended'] : null);
+
+        if (!$private_key_hex) {
+            error_log("ERROR: Wallet $address has no private key - skipping merge");
+            return ['success' => false, 'error' => 'No private key available', 'address' => $address];
+        }
+
         $night_value = isset($wallet['night_value']) ? $wallet['night_value'] : null;
 
         error_log("Merging imported wallet: $address");
