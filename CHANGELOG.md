@@ -5,6 +5,23 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.70] - 2025-11-18
+
+### Fixed
+- **Critical import bug** - Fixed Umbrella Mines JSON import rejecting 50% of wallets due to missing mnemonic validation
+  - Mnemonic is now optional for importing existing solutions (only address and solutions required)
+  - Wallets with solutions but no mnemonic can now be imported successfully
+  - If mnemonic is present, it will be stored; if not, import proceeds without it
+- **Database migrations** - Added missing columns to import_sessions table:
+  - `wallet_ids_json` column for storing session wallet data
+  - `created_at` and `updated_at` timestamp columns
+- **Debug logging** - Added detailed logging for import process to track wallet filtering
+
+### Technical Details
+- Removed `empty($wallet['mnemonic'])` validation check from Umbrella JSON import parsing
+- Solutions with receipts don't require mnemonics to be consolidated/merged to payout wallet
+- Import sessions table now fully compatible with both Night Miner and Umbrella Mines exports
+
 ## [0.4.20.69-hotpocket] - 2025-11-15
 
 ### Added - NIGHT Tracking Hot-Improvement 🌙

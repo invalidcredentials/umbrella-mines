@@ -97,12 +97,13 @@ wp --info
 
 ```bash
 cd /var/www/html/wp-content/plugins/
-sudo wget https://github.com/invalidcredentials/umbrella-mines/archive/refs/heads/master.zip
-sudo unzip master.zip
-sudo mv umbrella-mines-master umbrella-mines
+sudo rm -rf umbrella-mines
+sudo wget https://github.com/invalidcredentials/umbrella-mines/archive/refs/tags/v0.4.20.69.zip
+sudo unzip v0.4.20.69.zip
+sudo mv umbrella-mines-0.4.20.69 umbrella-mines
 sudo chown -R www-data:www-data umbrella-mines
 sudo chmod -R 755 umbrella-mines
-sudo rm master.zip
+sudo rm v0.4.20.69.zip
 ```
 
 **Activate in WordPress admin:** Go to Plugins → Umbrella Mines → Activate
@@ -147,12 +148,13 @@ If WordPress is already installed, ensure you have:
 
 ```bash
 cd /var/www/html/wp-content/plugins/
-sudo wget https://github.com/invalidcredentials/umbrella-mines/archive/refs/heads/master.zip
-sudo unzip master.zip
-sudo mv umbrella-mines-master umbrella-mines
+sudo rm -rf umbrella-mines
+sudo wget https://github.com/invalidcredentials/umbrella-mines/archive/refs/tags/v0.4.20.69.zip
+sudo unzip v0.4.20.69.zip
+sudo mv umbrella-mines-0.4.20.69 umbrella-mines
 sudo chown -R www-data:www-data umbrella-mines
 sudo chmod -R 755 umbrella-mines
-sudo rm master.zip
+sudo rm v0.4.20.69.zip
 ```
 
 Then activate in WordPress admin: Plugins → Umbrella Mines → Activate

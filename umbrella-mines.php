@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.4.20.69
+ * Version: 0.4.20.70
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('UMBRELLA_MINES_VERSION', '0.4.20.69');
+define('UMBRELLA_MINES_VERSION', '0.4.20.70');
 define('UMBRELLA_MINES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('UMBRELLA_MINES_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('UMBRELLA_MINES_DATA_DIR', WP_CONTENT_DIR . '/uploads/umbrella-mines');
@@ -437,6 +437,43 @@ class Umbrella_Mines {
             error_log('UMBRELLA MINES MIGRATION: Adding night_value column to merges table');
             $wpdb->query("ALTER TABLE `{$merges_table}` ADD COLUMN `night_value` DECIMAL(20,6) DEFAULT NULL AFTER `solutions_consolidated`");
             error_log('UMBRELLA MINES MIGRATION: night_value column added successfully');
+        }
+
+        // Migration 2: Add wallet_ids_json column to import_sessions table
+        $sessions_table = $wpdb->prefix . 'umbrella_mining_import_sessions';
+        $sessions_column_exists = $wpdb->get_results($wpdb->prepare(
+            "SHOW COLUMNS FROM `{$sessions_table}` LIKE %s",
+            'wallet_ids_json'
+        ));
+
+        if (empty($sessions_column_exists)) {
+            error_log('UMBRELLA MINES MIGRATION: Adding wallet_ids_json column to import_sessions table');
+            $wpdb->query("ALTER TABLE `{$sessions_table}` ADD COLUMN `wallet_ids_json` LONGTEXT NOT NULL AFTER `failed_count`");
+            error_log('UMBRELLA MINES MIGRATION: wallet_ids_json column added successfully');
+        }
+
+        // Migration 3: Add created_at column to import_sessions table
+        $sessions_created_exists = $wpdb->get_results($wpdb->prepare(
+            "SHOW COLUMNS FROM `{$sessions_table}` LIKE %s",
+            'created_at'
+        ));
+
+        if (empty($sessions_created_exists)) {
+            error_log('UMBRELLA MINES MIGRATION: Adding created_at column to import_sessions table');
+            $wpdb->query("ALTER TABLE `{$sessions_table}` ADD COLUMN `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP AFTER `status`");
+            error_log('UMBRELLA MINES MIGRATION: created_at column added successfully');
+        }
+
+        // Migration 4: Add updated_at column to import_sessions table
+        $sessions_updated_exists = $wpdb->get_results($wpdb->prepare(
+            "SHOW COLUMNS FROM `{$sessions_table}` LIKE %s",
+            'updated_at'
+        ));
+
+        if (empty($sessions_updated_exists)) {
+            error_log('UMBRELLA MINES MIGRATION: Adding updated_at column to import_sessions table');
+            $wpdb->query("ALTER TABLE `{$sessions_table}` ADD COLUMN `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER `created_at`");
+            error_log('UMBRELLA MINES MIGRATION: updated_at column added successfully');
         }
     }
 
@@ -3737,6 +3774,9 @@ class Umbrella_Mines {
         $total_solutions = 0;
         $challenge_submissions = array();
 
+        error_log("=== UMBRELLA JSON IMPORT DEBUG ===");
+        error_log("Total wallets in JSON file: " . count($import_data['wallets']));
+
         foreach ($import_data['wallets'] as $wallet) {
             // Skip if this wallet is a payout wallet
             if (isset($payout_addresses_to_skip[$wallet['address']])) {
@@ -3755,8 +3795,8 @@ class Umbrella_Mines {
                 continue;
             }
 
-            // Validate wallet structure
-            if (empty($wallet['address']) || empty($wallet['mnemonic']) || !isset($wallet['solutions'])) {
+            // Validate wallet structure - mnemonic is optional for imports
+            if (empty($wallet['address']) || !isset($wallet['solutions'])) {
                 continue;
             }
 
@@ -3781,6 +3821,10 @@ class Umbrella_Mines {
             $valid_wallets[] = $wallet;
         }
 
+        error_log("Skipped payout wallets: $skipped_payout_count");
+        error_log("Skipped already merged: $skipped_already_merged_count");
+        error_log("Valid wallets after filtering: " . count($valid_wallets));
+        error_log("Total solutions counted: $total_solutions");
 
         if (count($valid_wallets) === 0) {
             $error_msg = 'No valid wallets found in import file.';
