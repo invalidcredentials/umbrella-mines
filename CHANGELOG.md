@@ -5,6 +5,36 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.73] - 2025-11-18
+
+### Added
+- **Nocturne Miner Support** - Import solutions from Nocturne miner logs
+  - Created `Umbrella_Mines_Nocturne_Parser` class to parse Nocturne log files
+  - Supports .txt and .log file uploads containing Nocturne settings + logs
+  - Automatically extracts mnemonic from JSON config in log file
+  - Parses successful submissions (challenge_id, nonce, difficulty, wallet_index)
+  - Derives wallet addresses and private keys from mnemonic using BIP32/CIP-1852
+  - Uses 64-char `payment_skey_hex` (kL only) for CIP-8 signing compatibility
+  - Calculates NIGHT values from database rates (no API rate limiting)
+  - Follows same sign-and-merge flow as Night Miner and Umbrella JSON imports
+  - Added `ajax_parse_nocturne_log` AJAX endpoint
+  - Updated merge UI to accept .txt/.log files
+
+### How to Import Nocturne Logs
+1. **Configure Payout Wallet** - Import or create a payout wallet in Umbrella Mines first (this is where solutions will be merged to)
+2. **Prepare Log File** - Copy your Nocturne settings JSON and paste it at the top of your complete Nocturne logs
+3. **Save as .txt or .log** - Save the combined file with .txt or .log extension
+4. **Import** - Go to Merge Addresses page and drag/drop your file
+5. **Review** - Check wallet count and NIGHT estimate
+6. **Merge** - Click "MERGE ALL" button to consolidate solutions to your payout wallet
+
+### Technical Details
+- Nocturne parser derives wallets at path `m/1852'/1815'/0'/0/N` where N is wallet index
+- Private keys are 64-char hex (32-byte kL) for CIP-8/CIP-30 compatibility
+- NIGHT calculation uses `umbrella_night_rates` table populated by mining engine
+- Merge receipts stored in same `umbrella_mining_merges` table as other import types
+- View button in merge history shows full receipt with donation ID
+
 ## [0.4.20.72] - 2025-11-18
 
 ### Fixed

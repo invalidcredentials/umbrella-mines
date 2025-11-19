@@ -241,25 +241,19 @@ class Umbrella_Mines_Import_Processor {
             ];
         }
 
-        // Fetch work_to_star_rate values from API
-        $api_url = get_option('umbrella_mines_api_url', 'https://scavenger.prod.gd.midnighttge.io');
-        $rates_response = wp_remote_get($api_url . '/work_to_star_rate', array(
-            'timeout' => 10,
-            'sslverify' => false
-        ));
+        // Fetch rates from database (populated by mining engine)
+        global $wpdb;
+        $db_rates = $wpdb->get_results("SELECT day, star_per_receipt FROM {$wpdb->prefix}umbrella_night_rates ORDER BY day ASC");
 
+        // Build day_rates array indexed by (day - 1) for 0-based lookup
         $day_rates = [];
-        if (!is_wp_error($rates_response)) {
-            $body = wp_remote_retrieve_body($rates_response);
-            $rates_data = json_decode($body, true);
-
-            // API returns array indexed by day (0-based or 1-based, need to test)
-            if (is_array($rates_data)) {
-                $day_rates = $rates_data;
-                error_log("Fetched " . count($day_rates) . " day rates from API");
+        if ($db_rates) {
+            foreach ($db_rates as $rate) {
+                $day_rates[(int)$rate->day - 1] = (int)$rate->star_per_receipt;
             }
+            error_log("Loaded " . count($day_rates) . " day rates from database");
         } else {
-            error_log("Failed to fetch work_to_star_rate: " . $rates_response->get_error_message());
+            error_log("No rates found in database table umbrella_night_rates");
         }
 
         // Parse challenge_submissions to group solutions by day

@@ -1083,10 +1083,11 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
             // Detect file type
             const isZip = file.name.endsWith('.zip');
             const isJson = file.name.endsWith('.json');
+            const isNocturneLog = file.name.endsWith('.txt') || file.name.endsWith('.log');
 
             // Validate file type
-            if (!isZip && !isJson) {
-                alert('❌ Invalid file type. Please upload a ZIP or JSON file.');
+            if (!isZip && !isJson && !isNocturneLog) {
+                alert('❌ Invalid file type. Please upload a ZIP, JSON, or TXT/LOG file.');
                 return;
             }
 
@@ -1097,8 +1098,17 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
             }
 
             // Determine which parser to use
-            const action = isJson ? 'umbrella_parse_umbrella_json' : 'umbrella_parse_import_file';
-            const fileType = isJson ? 'JSON' : 'ZIP';
+            let action, fileType;
+            if (isJson) {
+                action = 'umbrella_parse_umbrella_json';
+                fileType = 'JSON';
+            } else if (isNocturneLog) {
+                action = 'umbrella_parse_nocturne_log';
+                fileType = 'Nocturne Log';
+            } else {
+                action = 'umbrella_parse_import_file';
+                fileType = 'ZIP';
+            }
 
             // Show parsing status
             $('#import-parsing-status').html(`
@@ -1733,9 +1743,9 @@ if (isset($_GET['success']) && $_GET['success'] == '1') {
                         Drag ZIP or JSON file here or click to browse
                     </div>
                     <div style="font-size: 13px; color: #999;">
-                        Supported: Night Miner exports (.zip) or Umbrella Mines exports (.json) • Max size: 50MB
+                        Supported: Night Miner (.zip), Umbrella Mines (.json), or Nocturne logs (.txt/.log) • Max size: 50MB
                     </div>
-                    <input type="file" id="import-file-input" accept=".zip,.json" style="display: none;">
+                    <input type="file" id="import-file-input" accept=".zip,.json,.txt,.log" style="display: none;">
                 </div>
 
                 <!-- Parsing Status -->
