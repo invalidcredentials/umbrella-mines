@@ -5,6 +5,22 @@ All notable changes to Umbrella Mines will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.20.74] - 2025-11-19
+
+### Fixed
+- **Import Mnemonic Flow** - Fixed "Failed to fetch Terms & Conditions from API" error
+  - Removed unnecessary API registration check for payout wallet imports
+  - Payout wallets are receive-only addresses and don't need Scavenger API registration
+  - Registration is only required for mining wallets that submit solutions
+  - Import flow now directly stores wallet in database without API calls
+  - Users can now import existing wallets from other platforms (Eternl, Nami, etc.) as payout destinations
+
+### Technical Details
+- Removed T&C API fetch from `ajax_import_payout_wallet`
+- Removed CIP-8 signature generation and `/register` endpoint call
+- Payout wallet import now completes instantly without network requests
+- `is_registered` field always returns true since API registration is not needed
+
 ## [0.4.20.73] - 2025-11-18
 
 ### Added

@@ -3,7 +3,7 @@
  * Plugin Name: Umbrella Mines
  * Plugin URI: https://umbrella.lol
  * Description: Professional Cardano Midnight Scavenger Mine implementation with AshMaize FFI hashing. Mine NIGHT tokens with high-performance PHP/Rust hybrid miner. Cross-platform: Windows, Linux, macOS.
- * Version: 0.4.20.73
+ * Version: 0.4.20.74
  * Author: Umbrella
  * Author URI: https://umbrella.lol
  * License: MIT
@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('UMBRELLA_MINES_VERSION', '0.4.20.73');
+define('UMBRELLA_MINES_VERSION', '0.4.20.74');
 define('UMBRELLA_MINES_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('UMBRELLA_MINES_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('UMBRELLA_MINES_DATA_DIR', WP_CONTENT_DIR . '/uploads/umbrella-mines');
@@ -3198,70 +3198,13 @@ class Umbrella_Mines {
             error_log("=== IMPORT PAYOUT WALLET ===");
             error_log("Address: $address");
             error_log("Network: $network");
+            error_log("Derivation path: $used_path");
 
-            // Get T&C to get the registration message
-            $api_url = get_option('umbrella_mines_api_url', 'https://scavenger.prod.gd.midnighttge.io');
-            require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/class-scavenger-api.php';
-            $tandc = Umbrella_Mines_ScavengerAPI::get_tandc($api_url);
-
-            if (!$tandc || !isset($tandc['message'])) {
-                wp_send_json_error('Failed to fetch Terms & Conditions from API');
-            }
-
-            error_log("T&C message: " . $tandc['message']);
-
-            // Sign T&C message (the 'message' field, not 'content')
-            require_once UMBRELLA_MINES_PLUGIN_DIR . 'includes/vendor/CardanoCIP8Signer.php';
-            $signature_result = CardanoCIP8Signer::sign_message(
-                $tandc['message'],
-                $wallet['payment_skey_extended'],
-                $address,
-                $network
-            );
-            $signature_hex = $signature_result['signature'];
-            $pubkey = $signature_result['pubkey'];
-
-            error_log("Testing registration with signature: " . substr($signature_hex, 0, 50) . "...");
-
-            // Call /register endpoint to TEST if wallet is already registered
-            $endpoint = "{$api_url}/register/{$address}/{$signature_hex}/{$pubkey}";
-
-            $response = wp_remote_post($endpoint, [
-                'timeout' => 15,
-                'headers' => ['Content-Type' => 'application/json']
-            ]);
+            // No need to register payout wallet with API - it's just a receive address
+            // Registration is only needed for mining wallets that submit solutions
+            error_log("✅ Payout wallet ready for import (no API registration needed)");
 
             global $wpdb;
-
-            if (is_wp_error($response)) {
-                error_log("API Error: " . $response->get_error_message());
-                wp_send_json_error('Failed to verify wallet registration: ' . $response->get_error_message());
-            }
-
-            $status_code = wp_remote_retrieve_response_code($response);
-            $body = wp_remote_retrieve_body($response);
-            $data = json_decode($body, true);
-
-            error_log("Registration test - Status: $status_code");
-            error_log("Registration test - Body: $body");
-
-            $is_registered = false;
-
-            // 200, 201, or 409 = Successfully registered (API is idempotent, always returns 201)
-            if ($status_code === 200 || $status_code === 201 || $status_code === 409) {
-                $is_registered = true;
-                error_log("✅ Wallet IS registered (status $status_code)");
-            }
-            // "already registered" message in error = Also valid
-            else if (isset($data['error']) && stripos($data['error'], 'already registered') !== false) {
-                $is_registered = true;
-                error_log("✅ Wallet IS registered ('already registered' message)");
-            }
-            // Any other error
-            else {
-                error_log("❌ Registration test failed with status $status_code");
-                wp_send_json_error('Failed to verify wallet: ' . ($data['error'] ?? 'Unknown error'));
-            }
 
             // Encrypt mnemonic before storing
             $mnemonic_encrypted = UmbrellaMines_EncryptionHelper::encrypt($mnemonic);
@@ -3301,16 +3244,18 @@ class Umbrella_Mines {
             );
 
             if ($inserted) {
-                $message = 'Wallet imported successfully!';
+                $message = 'Wallet imported successfully as payout destination!';
                 if (!$found_match) {
-                    $message .= " ⚠️ Warning: Using custom derivation path $used_path (not found in database). Verify this is correct.";
+                    $message .= " ⚠️ Using custom derivation path $used_path (not found in database).";
                 }
+
+                error_log("✅ Payout wallet imported successfully: $address");
 
                 wp_send_json_success(array(
                     'message' => $message,
                     'address' => $address,
                     'network' => $network,
-                    'is_registered' => $is_registered,
+                    'is_registered' => true, // Always true - payout wallet doesn't need API registration
                     'derivation_path' => $used_path,
                     'found_in_database' => $found_match
                 ));
